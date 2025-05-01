@@ -1,2 +1,5 @@
-# receipt2Xcl
-Simple AI project to convert Receipt to Excel
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+brew install tesseract
+
