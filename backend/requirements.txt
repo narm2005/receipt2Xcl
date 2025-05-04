@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pytesseract
+pillow
+requests
+pandas
+openpyxl
+jinja2
