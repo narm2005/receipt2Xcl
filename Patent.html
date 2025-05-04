@@ -1,0 +1,84 @@
+**Provisional Patent Pitch Deck Outline & Draft**
+
+**Title:** AI-Based Multi-Image Receipt Parser and Excel Exporter
+
+**Inventor:** \[Your Full Name]
+**Date:** \[Today's Date]
+
+---
+
+### Slide 1: Problem
+
+* Businesses and individuals waste hours manually entering receipt data.
+* Existing tools:
+
+  * Handle one image at a time
+  * Often fail with unstructured or non-English receipts
+  * Require custom setup or manual corrections
+
+### Slide 2: Solution
+
+**Receipt2Xcl**: A smart, AI-powered micro-SaaS that:
+
+* Accepts multiple receipt images
+* Uses OCR + LLMs (e.g., Mistral, OpenAI) to extract structured data
+* Compiles everything into a downloadable Excel file automatically
+
+### Slide 3: Key Innovation (Patent Basis)
+
+* **Novel AI pipeline** combining OCR with LLM for contextual receipt parsing
+* Handles multiple files and layouts
+* No custom regex or training data needed
+* Pluggable architecture (LLMs, OCR)
+
+### Slide 4: How It Works
+
+**1. Upload**: Drag/drop or select multiple receipt images
+**2. Process**:
+
+* OCR (Tesseract)
+* LLM (Mistral via Ollama or OpenAI) parses text to JSON
+  **3. Output**: All results exported into a structured Excel
+
+### Slide 5: Architecture Diagram
+
+* Frontend (React): UI for upload and results
+* Backend (FastAPI): File handling, OCR, Excel generation
+* AI Core: LLM via HTTP request, customizable prompt
+
+### Slide 6: Patent Claims (Draft)
+
+1. An automated pipeline combining OCR and an LLM for converting receipt images to structured output.
+2. A system supporting multiple image files and dynamic receipt formats.
+3. Plug-and-play design enabling model substitution.
+
+### Slide 7: Market Opportunity
+
+* SMBs, freelancers, accountants
+* \$1B+ market in receipt and expense management
+* Expansion into invoice processing, tax automation, etc.
+
+### Slide 8: Competitive Edge
+
+* Open-source and commercial-ready
+* Privacy-friendly (self-hosted LLMs like Mistral)
+* Rapid deployment via Render
+
+### Slide 9: Go-To-Market
+
+* Launch on Product Hunt, Indie Hackers, Reddit
+* Free tier + premium API pricing
+* B2B licensing to SaaS platforms
+
+### Slide 10: Ask & Next Steps
+
+* File provisional patent (can do it solo or via legal services)
+* Build early traction and user feedback
+* Explore partnerships with accounting software providers
+
+---
+
+**Contact Info:**
+\[Your Name]
+\[Email / GitHub / LinkedIn]
+“Patent Pending” status enabled with provisional filing
