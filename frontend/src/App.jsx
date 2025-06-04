@@ -1,78 +1,75 @@
-import React, { useState } from 'react';
-import axios from 'axios';
+import React, { useEffect } from "react";
+import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
+import Header from "./components/Header";
+import Hero from "./components/Hero";
+import Features from "./components/Features";
+import HowItWorks from "./components/HowItWorks";
+import Testimonials from "./components/Testimonials";
+import Pricing from "./components/Pricing";
+import CTA from "./components/CTA";
+import Footer from "./components/Footer";
+//import ReceiptDropUploader from './components/ReceiptDropUploader';
+//import SignInPage from "./components/SignInPage";
+import FileDropUploader from "./components/FileDropUploader";
+import ReceiptDropUploaderWithPreview from "./components/ReceiptDropUploaderWithPreview";
+
+
+import "./App.css";
+import "@fortawesome/fontawesome-free/css/all.min.css";
+
+function FooterConditional() {
+  const location = useLocation();
+  // Show footer only on home page
+  if (location.pathname === "/") {
+    return <Footer />;
+  }
+  return null;
+}
 
 function App() {
-  const [files, setFiles] = useState([]);
-  const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState(null);
-
-  const handleFileChange = (event) => {
-    const newFiles = Array.from(event.target.files);
-    setFiles(prev => [...prev, ...newFiles]);
-  };
-
-  const handleSubmit = async () => {
-    if (files.length === 0) return;
-
-    const formData = new FormData();
-    files.forEach(file => formData.append('files', file));
-
-    try {
-      setUploading(true);
-      const response = await axios.post('http://localhost:8000/upload', formData);
-      setResult(response.data);
-    } catch (err) {
-      console.error('Upload failed:', err);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const downloadExcel = () => {
-    window.open('http://localhost:8000/download', '_blank');
-  };
+  // Smooth scroll for anchor links
+  useEffect(() => {
+    const handler = (e) => {
+      const href = e.target.getAttribute("href");
+      if (href && href.startsWith("#")) {
+        e.preventDefault();
+        const el = document.querySelector(href);
+        if (el) el.scrollIntoView({ behavior: "smooth" });
+      }
+    };
+    document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
+      anchor.addEventListener("click", handler);
+    });
+    return () => {
+      document.querySelectorAll('a[href^="#"]').forEach((anchor) => {
+        anchor.removeEventListener("click", handler);
+      });
+    };
+  }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <h1 className="text-2xl font-bold mb-4">Receipt to Excel Converter</h1>
+    <Router>
+      <Header />
+      <Routes>
+        <Route
+          path="/"
+          element={
+            <>
+              <Hero />
+              <Features />
+              <HowItWorks />
+              <Testimonials />
+              <Pricing />
+              <CTA />
+            </>
+          }
+        />
+        <Route path="/file" element={<ReceiptDropUploaderWithPreview />} />
+                {/* <Route path="/file" element={<FileDropUploader />} /> */}
 
-      <input
-        type="file"
-        accept="image/*"
-        multiple
-        onChange={handleFileChange}
-        className="mb-4"
-      />
-
-      <div className="mb-4">
-        {files.length > 0 && <p>{files.length} file(s) selected</p>}
-        <button
-          onClick={handleSubmit}
-          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 mr-4"
-          disabled={uploading}
-        >
-          {uploading ? 'Processing...' : 'Upload & Process'}
-        </button>
-
-        {result && (
-          <button
-            onClick={downloadExcel}
-            className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"
-          >
-            Download Excel
-          </button>
-        )}
-      </div>
-
-      {result && (
-        <div className="mt-4 bg-white p-4 rounded shadow">
-          <h2 className="text-lg font-semibold mb-2">Results:</h2>
-          <pre className="whitespace-pre-wrap text-sm">
-            {JSON.stringify(result.results, null, 2)}
-          </pre>
-        </div>
-      )}
-    </div>
+      </Routes>
+      <FooterConditional />
+     </Router>
   );
 }
 
