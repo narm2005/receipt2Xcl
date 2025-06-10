@@ -19,8 +19,21 @@ from sqlalchemy.orm import Session
 from database import get_db, CachedResult, UploadLog
 import hashlib
 from datetime import date
+from pydantic import BaseModel
+from google.oauth2 import id_token
+from google.auth.transport import requests
+import jwt
+from datetime import datetime, timedelta
+
+
+from fastapi.responses import StreamingResponse, FileResponse
+SECRET_KEY = "a-string-secret-at-least-256-bits-long"  # Use a strong secret in production
+
 
 load_dotenv()
+GOOGLE_APPLICATION_CREDENTIALS="google_cloud_credentials.json"
+
+GOOGLE_CLIENT_ID = '281532092006-7q4of0in8g5kjgnv0upl53f0iu62hj7o.apps.googleusercontent.com'  # Replace with your client ID
 
 DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -55,6 +68,10 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(JSON_FOLDER, exist_ok=True)
 
 
+
+
+class GoogleAuthRequest(BaseModel):
+    credential: str
 
 
 def sanitize_json(raw: str) -> dict:
@@ -223,41 +240,34 @@ async def upload_receipts(
     auto_detect: Optional[bool] = Form(False),
     db: Session = Depends(get_db)
 ):
-
-
     ip_address = request.client.host
     today = date.today()
-
-    # ✅ Rate limit check
-    if db.query(UploadLog).filter(UploadLog.ip == ip_address, UploadLog.upload_date == today).count() >= 3:
-        raise HTTPException(status_code=403, detail="Free daily upload limit (3) reached.")
+    # # ✅ Rate limit check
+    # if db.query(UploadLog).filter(UploadLog.ip == ip_address, UploadLog.upload_date == today).count() >= 3:
+    #     raise HTTPException(status_code=403, detail="Free daily upload limit (3) reached.")
 
     all_rows = []
+    all_receipts = []
 
     for file in files:
         try:
             contents = await file.read()
             file_hash = compute_sha256(contents)
 
-            # ✅ Check cache
+            # Check cache
             cached = db.query(CachedResult).filter(CachedResult.file_hash == file_hash).first()
             if cached:
                 parsed = json.loads(cached.json_data)
                 source = "cache"
             else:
-                # Save temp file
                 temp_path = os.path.join(UPLOAD_FOLDER, f"temp_{uuid.uuid4().hex}.png")
                 with open(temp_path, "wb") as f:
                     f.write(contents)
 
-                # OCR
                 extracted_text = extract_google_text(contents)
-
-                # Save JSON via DeepSeek
                 json_path = os.path.join(JSON_FOLDER, f"{uuid.uuid4().hex}.json")
                 await parse_with_deepseek(extracted_text, json_path)
 
-                # Read and sanitize JSON
                 with open(json_path) as f:
                     raw = f.read()
                 try:
@@ -265,21 +275,18 @@ async def upload_receipts(
                 except:
                     parsed = json.loads(sanitize_json_string(raw))
 
-                # ✅ Cache result
                 db.add(CachedResult(file_hash=file_hash, json_data=json.dumps(parsed)))
                 db.commit()
-
-                # Cleanup
                 os.remove(temp_path)
                 source = "deepseek"
 
-            # ✅ Log usage
             db.add(UploadLog(ip=ip_address, upload_date=today))
             db.commit()
 
-            # Extract structured rows
             receipt = parsed.get("ReceiptInfo", {})
             items = receipt.get("ITEMS", [])
+
+            # For Excel export
             for item in items:
                 all_rows.append({
                     "ReceiptFile": file.filename,
@@ -306,11 +313,26 @@ async def upload_receipts(
                     "DiscountAmount": item.get("discountAmount", 0.0)
                 })
 
+            # For frontend preview (all receipts)
+            all_receipts.append({
+                "merchant": receipt.get("merchant", ""),
+                "date": receipt.get("receiptDate", ""),
+                "total": receipt.get("total", 0.0),
+                "items": [
+                    {
+                        "description": item.get("description", ""),
+                        "amount": item.get("totalPrice", 0.0),
+                        "category": item.get("category", ""),
+                    }
+                    for item in items
+                ],
+            })
+
         except Exception as e:
             print(f"Error processing file {file.filename}: {str(e)}")
             continue
 
-    # ✅ Save to Excel
+    # Save to Excel
     if all_rows:
         df = pd.DataFrame(all_rows)
         if os.path.exists(EXCEL_PATH):
@@ -319,11 +341,15 @@ async def upload_receipts(
         else:
             df.to_excel(EXCEL_PATH, index=False)
 
+        # Save all_receipts to a JSON file for export endpoints
+        with open(os.path.join(UPLOAD_FOLDER, "latest_receipts.json"), "w") as f:
+            json.dump(all_receipts, f, indent=2)
+
         return {
             "message": "Success",
             "processed_files": len(files),
             "total_items": len(all_rows),
-            "source": source,
+            "receipts": all_receipts,  # <-- Return all receipts as a list
             "excel_url": "/download"
         }
 
@@ -363,3 +389,67 @@ def download_excel():
 
 def compute_sha256(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
+
+
+
+@app.get("/export/json")
+def export_json():
+    json_path = os.path.join(UPLOAD_FOLDER, "latest_receipts.json")
+    if not os.path.exists(json_path):
+        raise HTTPException(status_code=404, detail="No processed receipts found.")
+    return FileResponse(json_path, filename="receipts.json", media_type="application/json")
+
+@app.get("/export/csv")
+def export_csv():
+    json_path = os.path.join(UPLOAD_FOLDER, "latest_receipts.json")
+    if not os.path.exists(json_path):
+        raise HTTPException(status_code=404, detail="No processed receipts found.")
+
+    with open(json_path) as f:
+        receipts = json.load(f)
+
+    # Flatten for CSV
+    rows = []
+    for receipt in receipts:
+        for item in receipt.get("items", []):
+            rows.append({
+                "Merchant": receipt.get("merchant", ""),
+                "Date": receipt.get("date", ""),
+                "Total": receipt.get("total", 0.0),
+                "Description": item.get("description", ""),
+                "Amount": item.get("amount", 0.0),
+                "Category": item.get("category", ""),
+            })
+
+    df = pd.DataFrame(rows)
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=receipts.csv"}
+    )
+
+@app.post("/auth/callback")
+async def google_auth(data: GoogleAuthRequest):
+    try:
+        idinfo = id_token.verify_oauth2_token(
+            data.credential,
+            requests.Request(),
+            GOOGLE_CLIENT_ID
+        )
+        # Create JWT payload
+        payload = {
+            "email": idinfo.get("email"),
+            "name": idinfo.get("name"),
+            "exp": datetime.utcnow() + timedelta(hours=12)
+        }
+        token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+        return {
+            "success": True,
+            "token": token,
+            "name": idinfo.get("name"),
+            "email": idinfo.get("email"),
+            "picture": idinfo.get("picture"),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}

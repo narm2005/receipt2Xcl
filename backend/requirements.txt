@@ -31,5 +31,6 @@ nervaluate
 slowapi
 google-cloud-vision
 google-cloud-firestore
+PyJWT
 
 
