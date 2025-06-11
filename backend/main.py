@@ -35,9 +35,17 @@ SECRET_KEY = "a-string-secret-at-least-256-bits-long"  # Use a strong secret in 
 
 
 load_dotenv()
-GOOGLE_APPLICATION_CREDENTIALS="google_cloud_credentials.json"
+#GOOGLE_APPLICATION_CREDENTIALS="google_cloud_credentials.json"
+# Read JSON from environment
+credentials_info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
 
-GOOGLE_CLIENT_ID = '281532092006-7q4of0in8g5kjgnv0upl53f0iu62hj7o.apps.googleusercontent.com'  # Replace with your client ID
+# Write to a temporary file (if required by library)
+with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp:
+    json.dump(credentials_info, temp)
+    temp.flush()
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp.name
+
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')  # Replace with your client ID
 
 DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -94,7 +102,7 @@ def sanitize_json(raw: str) -> dict:
         # Fallback: Extract JSON substring
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         return json.loads(match.group()) if match else {"error": "Invalid JSON"}
-    
+
 def sanitize_json_string(raw: str) -> str:
     # Remove Markdown code block if any
     raw = raw.strip().strip("```json").strip("```")
@@ -118,133 +126,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 
-# @app.post("/upload")
-# async def upload_receipts(
-#         files: List[UploadFile] = File(...),
-#         lang: Optional[str] = Form(None),
-#         auto_detect: Optional[bool] = Form(False)
-# ):
-#     print(f"Received files: {[file.filename for file in files]}")
-#     print(f"Lang: {lang}, Auto-detect: {auto_detect}")
-#
-#     all_rows = []  # This will store data from all receipts
-#
-#     for file in files:
-#         try:
-#             contents = await file.read()
-#             random_json_filename = f"{uuid.uuid4().hex}.json"
-#             json_path = os.path.join(JSON_FOLDER, random_json_filename)
-#             random_temp_path = f"temp_{uuid.uuid4().hex}.png"
-#             temp_path = os.path.join(UPLOAD_FOLDER, random_temp_path)
-#
-#             with open(temp_path, "wb") as f:
-#                 f.write(contents)
-#
-#             # # Process the image with Google Vision API
-#             # image = vision.Image(content=contents)
-#             # response = client.text_detection(image=image)
-#             # extracted_text = response.text_annotations[0].description
-#
-#             # # 1. Check cache first
-#             # if cached := await get_cached_result(contents):
-#             #     return {"status": "success", "source": "cache", "data": cached}
-#
-#             # 2.
-#
-#             try:
-#                 extracted_text = extract_google_text(contents)
-#                 print(extracted_text)
-#
-#                 # Convert OCR to JSON (assuming parse_with_deepseek exists)
-#                 await parse_with_deepseek(extracted_text, json_path)
-#                 # 3. Cache results (skip for files >5MB to avoid high costs)
-#                 # if len(contents) < 5_000_000:
-#                 #     await cache_result(contents, parsed_data)
-#                 # return {"status": "success", "source": "vision_api", "data": parsed_data}
-#
-#             except Exception as e:
-#                  raise HTTPException(500, f"OCR processing failed: {str(e)}")
-#
-#             try:
-#                 with open(json_path) as f:
-#                     data = f.read()
-#                     parsed = json.loads(data)
-#             except json.JSONDecodeError:
-#                 print("❗ Raw DeepSeek response not valid JSON. Attempting to sanitize...")
-#                 try:
-#                     cleaned_json = sanitize_json_string(data)
-#                     parsed = json.loads(cleaned_json)
-#                 except Exception as e:
-#                     raise HTTPException(
-#                         status_code=500,
-#                         detail=f"Failed to parse JSON even after sanitizing. Error: {str(e)}. Raw: {data}"
-#                     )
-#
-#             # Extract data from the receipt
-#             receipt = parsed.get("ReceiptInfo", {})
-#             items = receipt.get("ITEMS", [])
-#
-#             for item in items:
-#                 all_rows.append({
-#                     "ReceiptFile": file.filename,
-#                     "Merchant": receipt.get("merchant", ""),
-#                     "Address": receipt.get("address", ""),
-#                     "City": receipt.get("city", ""),
-#                     "State": receipt.get("state", ""),
-#                     "PhoneNumber": receipt.get("phoneNumber", ""),
-#                     "ReceiptDate": receipt.get("receiptDate", ""),
-#                     "ReceiptTime": receipt.get("receiptTime", ""),
-#                     "TotalItems": receipt.get("totalItems", ""),
-#                     "DiningOptions": receipt.get("diningOptions", ""),
-#                     "PaymentType": receipt.get("paymentType", ""),
-#                     "CreditCardType": receipt.get("creditCardType", ""),
-#                     "TotalDiscount": receipt.get("totalDiscount", 0.0),
-#                     "Tax": receipt.get("tax", 0.0),
-#                     "Total": receipt.get("total", 0.0),
-#                     "Description": item.get("description", ""),
-#                     "UnabbreviatedDescription": item.get("unabbreviatedDescription", ""),
-#                     "IncludedItems": ", ".join(item.get("includedItems", [])),
-#                     "Quantity": item.get("quantity", 0),
-#                     "UnitPrice": item.get("unitPrice", 0.0),
-#                     "TotalPrice": item.get("totalPrice", 0.0),
-#                     "DiscountAmount": item.get("discountAmount", 0.0)
-#                 })
-#
-#         except Exception as e:
-#             print(f"Error processing file {file.filename}: {str(e)}")
-#             continue  # Continue with next file even if one fails
-#
-#         finally:
-#             # Clean up temporary files
-#             if os.path.exists(temp_path):
-#                 os.remove(temp_path)
-#             # Add any other cleanup here for 'cleaned_path' if needed
-#
-#     # After processing all files, save all data to Excel
-#     if all_rows:
-#         df = pd.DataFrame(all_rows)
-#
-#         # Check if Excel file already exists
-#         if os.path.exists(EXCEL_PATH):
-#             # Append to existing file (create new sheet with timestamp)
-#             with pd.ExcelWriter(EXCEL_PATH, mode='a', engine='openpyxl') as writer:
-#                 sheet_name = f"Receipts_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
-#                 df.to_excel(writer, sheet_name=sheet_name, index=False)
-#         else:
-#             # Create new Excel file
-#             df.to_excel(EXCEL_PATH, index=False)
-#
-#         return {
-#             "message": "Success",
-#             "processed_files": len(files),
-#             "total_items": len(all_rows),
-#             "excel_url": "/download"
-#         }
-#     else:
-#         raise HTTPException(
-#             status_code=400,
-#             detail="No valid receipt data could be extracted from the uploaded files."
-#         )
 
 @app.post("/upload")
 async def upload_receipts(

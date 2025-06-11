@@ -1,10 +1,5 @@
-# requirements.txt
-# pip install paddleocr paddlepaddle openpyxl httpx fastapi uvicorn opencv-python transformers torch
-
 import cv2
 import numpy as np
-# from paddleocr import PaddleOCR
-# from transformers import LayoutLMv3Processor, LayoutLMv3ForTokenClassification
 import torch
 from PIL import Image
 import httpx
@@ -13,26 +8,33 @@ import uuid
 import os
 import json
 import re
-import asyncio
 from dotenv import load_dotenv
 import convert
-from firestore_cache import get_cached_result, cache_result
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
-# from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-# from tempfile import TemporaryDirectory
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from typing import List, Optional
-# from ocr_utils import ocr_image_multilang
 from google.cloud import vision
+from sqlalchemy.orm import Session
+from database import get_db, CachedResult, UploadLog
+import hashlib
+from datetime import date
+from pydantic import BaseModel
+from google.oauth2 import id_token
+from google.auth.transport import requests
+import jwt
+from datetime import datetime, timedelta
+import base64
 
-# # Initialize models
-# ocr_engine = PaddleOCR(use_angle_cls=True, lang='en')
-# processor = LayoutLMv3Processor.from_pretrained("microsoft/layoutlmv3-base")
-# layout_model = LayoutLMv3ForTokenClassification.from_pretrained("microsoft/layoutlmv3-base")
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# layout_model.to(device)
+from fastapi.responses import StreamingResponse, FileResponse
+
+SECRET_KEY = "a-string-secret-at-least-256-bits-long"  # Use a strong secret in production
 
 load_dotenv()
+GOOGLE_APPLICATION_CREDENTIALS = "google_cloud_credentials.json"
+
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')  # Replace with your client ID
 
 DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -53,6 +55,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+class SupabaseProcessRequest(BaseModel):
+    file_id: str
+    file_name: str
+    user_id: str
+    file_base64: str
+
+
 # Constants
 # EXCEL_PATH = "structured_receipt.xlsx"
 # Configuration
@@ -65,41 +75,8 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(JSON_FOLDER, exist_ok=True)
 
 
-# def preprocess_image(image_path: str) -> str:
-#     """Clean image for OCR"""
-#     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-#     img = cv2.GaussianBlur(img, (3, 3), 0)
-#     _, img = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-#     cleaned_path = f"cleaned_{uuid.uuid4().hex}.png"
-#     cv2.imwrite(cleaned_path, img)
-#     return cleaned_path
-#
-#
-# async def paddle_ocr(image_path: str, lang: str = 'en') -> str:
-#     """Fast text extraction with PaddleOCR"""
-#     result = ocr_engine.ocr(image_path)
-#     return "\n".join([line[1][0] for line in result[0]])
-#
-#
-# async def layoutlmv3_ocr(image_path: str) -> dict:
-#     """Layout-aware extraction with LayoutLMv3"""
-#     image = Image.open(image_path).convert("RGB")
-#     encoding = processor(
-#         image,
-#         return_tensors="pt",
-#         truncation=True,
-#         max_length=512
-#     )
-#     with torch.no_grad():
-#         outputs = layout_model(**encoding.to(device))
-#     return process_layout_outputs(outputs, encoding)
-#
-#
-# def process_layout_outputs(outputs, encoding):
-#     """Convert model outputs to structured data"""
-#     # Implement your custom logic here based on token classifications
-#     # Example: Extract key-value pairs from receipts
-#     pass
+class GoogleAuthRequest(BaseModel):
+    credential: str
 
 
 def sanitize_json(raw: str) -> dict:
@@ -131,123 +108,197 @@ def sanitize_json_string(raw: str) -> str:
     return raw
 
 
-async def parse_with_llm(text: str) -> dict:
-    """Enhanced LLM processing with full error handling"""
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
 
-    if not DEEPSEEK_API_KEY:
-        raise ValueError("DeepSeek API key not configured")
 
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {
-                "role": "system",
-                "content": "Extract receipt data as JSON. Example: {'Vendor': '...', 'Total': 0.0}"
-            },
-            {
-                "role": "user",
-                "content": f"Extract from this receipt:\n{text}"
-            }
-        ],
-        "temperature": 0.2
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        for _ in range(3):  # Retry up to 3 times
-            try:
-                response = await client.post(
-                    "https://api.deepseek.com/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
-                    json=payload
-                )
-                # json={
-                #     "model": "deepseek-chat",
-                #     "messages": [{"role": "user", "content": f"Extract as JSON:  {prompt}"}],
-                #     "temperature": 0.2
-                # }
-
-                response.raise_for_status()
-                response_data = response.json()
-
-                # Extract content (may be str or dict)
-                content = response_data["choices"][0]["message"]["content"]
-
-                # Parse if string, else use directly
-                if isinstance(content, str):
-                    content = content.strip("```json").strip("```")
-                    return json.loads(content)
-                return content
-            # return sanitize_json(response.json()["choices"][0]["message"]["content"])
-            except Exception:
-                continue
-        raise HTTPException(status_code=500, detail="LLM processing failed")
-
+# @app.post("/upload")
+# async def upload_receipts(
+#         files: List[UploadFile] = File(...),
+#         lang: Optional[str] = Form(None),
+#         auto_detect: Optional[bool] = Form(False)
+# ):
+#     print(f"Received files: {[file.filename for file in files]}")
+#     print(f"Lang: {lang}, Auto-detect: {auto_detect}")
+#
+#     all_rows = []  # This will store data from all receipts
+#
+#     for file in files:
+#         try:
+#             contents = await file.read()
+#             random_json_filename = f"{uuid.uuid4().hex}.json"
+#             json_path = os.path.join(JSON_FOLDER, random_json_filename)
+#             random_temp_path = f"temp_{uuid.uuid4().hex}.png"
+#             temp_path = os.path.join(UPLOAD_FOLDER, random_temp_path)
+#
+#             with open(temp_path, "wb") as f:
+#                 f.write(contents)
+#
+#             # # Process the image with Google Vision API
+#             # image = vision.Image(content=contents)
+#             # response = client.text_detection(image=image)
+#             # extracted_text = response.text_annotations[0].description
+#
+#             # # 1. Check cache first
+#             # if cached := await get_cached_result(contents):
+#             #     return {"status": "success", "source": "cache", "data": cached}
+#
+#             # 2.
+#
+#             try:
+#                 extracted_text = extract_google_text(contents)
+#                 print(extracted_text)
+#
+#                 # Convert OCR to JSON (assuming parse_with_deepseek exists)
+#                 await parse_with_deepseek(extracted_text, json_path)
+#                 # 3. Cache results (skip for files >5MB to avoid high costs)
+#                 # if len(contents) < 5_000_000:
+#                 #     await cache_result(contents, parsed_data)
+#                 # return {"status": "success", "source": "vision_api", "data": parsed_data}
+#
+#             except Exception as e:
+#                  raise HTTPException(500, f"OCR processing failed: {str(e)}")
+#
+#             try:
+#                 with open(json_path) as f:
+#                     data = f.read()
+#                     parsed = json.loads(data)
+#             except json.JSONDecodeError:
+#                 print("❗ Raw DeepSeek response not valid JSON. Attempting to sanitize...")
+#                 try:
+#                     cleaned_json = sanitize_json_string(data)
+#                     parsed = json.loads(cleaned_json)
+#                 except Exception as e:
+#                     raise HTTPException(
+#                         status_code=500,
+#                         detail=f"Failed to parse JSON even after sanitizing. Error: {str(e)}. Raw: {data}"
+#                     )
+#
+#             # Extract data from the receipt
+#             receipt = parsed.get("ReceiptInfo", {})
+#             items = receipt.get("ITEMS", [])
+#
+#             for item in items:
+#                 all_rows.append({
+#                     "ReceiptFile": file.filename,
+#                     "Merchant": receipt.get("merchant", ""),
+#                     "Address": receipt.get("address", ""),
+#                     "City": receipt.get("city", ""),
+#                     "State": receipt.get("state", ""),
+#                     "PhoneNumber": receipt.get("phoneNumber", ""),
+#                     "ReceiptDate": receipt.get("receiptDate", ""),
+#                     "ReceiptTime": receipt.get("receiptTime", ""),
+#                     "TotalItems": receipt.get("totalItems", ""),
+#                     "DiningOptions": receipt.get("diningOptions", ""),
+#                     "PaymentType": receipt.get("paymentType", ""),
+#                     "CreditCardType": receipt.get("creditCardType", ""),
+#                     "TotalDiscount": receipt.get("totalDiscount", 0.0),
+#                     "Tax": receipt.get("tax", 0.0),
+#                     "Total": receipt.get("total", 0.0),
+#                     "Description": item.get("description", ""),
+#                     "UnabbreviatedDescription": item.get("unabbreviatedDescription", ""),
+#                     "IncludedItems": ", ".join(item.get("includedItems", [])),
+#                     "Quantity": item.get("quantity", 0),
+#                     "UnitPrice": item.get("unitPrice", 0.0),
+#                     "TotalPrice": item.get("totalPrice", 0.0),
+#                     "DiscountAmount": item.get("discountAmount", 0.0)
+#                 })
+#
+#         except Exception as e:
+#             print(f"Error processing file {file.filename}: {str(e)}")
+#             continue  # Continue with next file even if one fails
+#
+#         finally:
+#             # Clean up temporary files
+#             if os.path.exists(temp_path):
+#                 os.remove(temp_path)
+#             # Add any other cleanup here for 'cleaned_path' if needed
+#
+#     # After processing all files, save all data to Excel
+#     if all_rows:
+#         df = pd.DataFrame(all_rows)
+#
+#         # Check if Excel file already exists
+#         if os.path.exists(EXCEL_PATH):
+#             # Append to existing file (create new sheet with timestamp)
+#             with pd.ExcelWriter(EXCEL_PATH, mode='a', engine='openpyxl') as writer:
+#                 sheet_name = f"Receipts_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
+#                 df.to_excel(writer, sheet_name=sheet_name, index=False)
+#         else:
+#             # Create new Excel file
+#             df.to_excel(EXCEL_PATH, index=False)
+#
+#         return {
+#             "message": "Success",
+#             "processed_files": len(files),
+#             "total_items": len(all_rows),
+#             "excel_url": "/download"
+#         }
+#     else:
+#         raise HTTPException(
+#             status_code=400,
+#             detail="No valid receipt data could be extracted from the uploaded files."
+#         )
 
 @app.post("/upload")
 async def upload_receipts(
+        request: Request,
         files: List[UploadFile] = File(...),
         lang: Optional[str] = Form(None),
-        auto_detect: Optional[bool] = Form(False)
+        auto_detect: Optional[bool] = Form(False),
+        db: Session = Depends(get_db)
 ):
-    print(f"Received files: {[file.filename for file in files]}")
-    print(f"Lang: {lang}, Auto-detect: {auto_detect}")
+    ip_address = request.client.host
+    today = date.today()
+    # # ✅ Rate limit check
+    # if db.query(UploadLog).filter(UploadLog.ip == ip_address, UploadLog.upload_date == today).count() >= 3:
+    #     raise HTTPException(status_code=403, detail="Free daily upload limit (3) reached.")
 
-    all_rows = []  # This will store data from all receipts
+    all_rows = []
+    all_receipts = []
 
     for file in files:
         try:
             contents = await file.read()
-            random_json_filename = f"{uuid.uuid4().hex}.json"
-            json_path = os.path.join(JSON_FOLDER, random_json_filename)
-            random_temp_path = f"temp_{uuid.uuid4().hex}.png"
-            temp_path = os.path.join(UPLOAD_FOLDER, random_temp_path)
+            file_hash = compute_sha256(contents)
 
-            with open(temp_path, "wb") as f:
-                f.write(contents)
+            # Check cache
+            cached = db.query(CachedResult).filter(CachedResult.file_hash == file_hash).first()
+            if cached:
+                parsed = json.loads(cached.json_data)
+                source = "cache"
+            else:
+                temp_path = os.path.join(UPLOAD_FOLDER, f"temp_{uuid.uuid4().hex}.png")
+                with open(temp_path, "wb") as f:
+                    f.write(contents)
 
-            # # Process the image with Google Vision API
-            # image = vision.Image(content=contents)
-            # response = client.text_detection(image=image)
-            # extracted_text = response.text_annotations[0].description
-
-            # 1. Check cache first
-            if cached := await get_cached_result(contents):
-                return {"status": "success", "source": "cache", "data": cached}
-
-            # 2.
-            try:
                 extracted_text = extract_google_text(contents)
-                print(extracted_text)
-
-                # Convert OCR to JSON (assuming parse_with_deepseek exists)
+                json_path = os.path.join(JSON_FOLDER, f"{uuid.uuid4().hex}.json")
                 await parse_with_deepseek(extracted_text, json_path)
-                # 3. Cache results (skip for files >5MB to avoid high costs)
-                if len(contents) < 5_000_000:
-                    await cache_result(contents, parsed_data)
-                return {"status": "success", "source": "vision_api", "data": parsed_data}
 
-            except Exception as e:
-                raise HTTPException(500, f"OCR processing failed: {str(e)}")
-
-            try:
                 with open(json_path) as f:
-                    data = f.read()
-                    parsed = json.loads(data)
-            except json.JSONDecodeError:
-                print("❗ Raw DeepSeek response not valid JSON. Attempting to sanitize...")
+                    raw = f.read()
                 try:
-                    cleaned_json = sanitize_json_string(data)
-                    parsed = json.loads(cleaned_json)
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to parse JSON even after sanitizing. Error: {str(e)}. Raw: {data}"
-                    )
+                    parsed = json.loads(raw)
+                except:
+                    parsed = json.loads(sanitize_json_string(raw))
 
-            # Extract data from the receipt
+                db.add(CachedResult(file_hash=file_hash, json_data=json.dumps(parsed)))
+                db.commit()
+                os.remove(temp_path)
+                source = "deepseek"
+
+            db.add(UploadLog(ip=ip_address, upload_date=today))
+            db.commit()
+
             receipt = parsed.get("ReceiptInfo", {})
             items = receipt.get("ITEMS", [])
 
+            # For Excel export
             for item in items:
                 all_rows.append({
                     "ReceiptFile": file.filename,
@@ -274,41 +325,47 @@ async def upload_receipts(
                     "DiscountAmount": item.get("discountAmount", 0.0)
                 })
 
+            # For frontend preview (all receipts)
+            all_receipts.append({
+                "merchant": receipt.get("merchant", ""),
+                "date": receipt.get("receiptDate", ""),
+                "total": receipt.get("total", 0.0),
+                "items": [
+                    {
+                        "description": item.get("description", ""),
+                        "amount": item.get("totalPrice", 0.0),
+                        "category": item.get("category", ""),
+                    }
+                    for item in items
+                ],
+            })
+
         except Exception as e:
             print(f"Error processing file {file.filename}: {str(e)}")
-            continue  # Continue with next file even if one fails
+            continue
 
-        finally:
-            # Clean up temporary files
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-            # Add any other cleanup here for 'cleaned_path' if needed
-
-    # After processing all files, save all data to Excel
+    # Save to Excel
     if all_rows:
         df = pd.DataFrame(all_rows)
-
-        # Check if Excel file already exists
         if os.path.exists(EXCEL_PATH):
-            # Append to existing file (create new sheet with timestamp)
             with pd.ExcelWriter(EXCEL_PATH, mode='a', engine='openpyxl') as writer:
-                sheet_name = f"Receipts_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                df.to_excel(writer, sheet_name=f"Receipts_{pd.Timestamp.now():%Y%m%d_%H%M%S}", index=False)
         else:
-            # Create new Excel file
             df.to_excel(EXCEL_PATH, index=False)
+
+        # Save all_receipts to a JSON file for export endpoints
+        with open(os.path.join(UPLOAD_FOLDER, "latest_receipts.json"), "w") as f:
+            json.dump(all_receipts, f, indent=2)
 
         return {
             "message": "Success",
             "processed_files": len(files),
             "total_items": len(all_rows),
+            "receipts": all_receipts,  # <-- Return all receipts as a list
             "excel_url": "/download"
         }
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="No valid receipt data could be extracted from the uploaded files."
-        )
+
+    raise HTTPException(status_code=400, detail="No valid receipt data could be extracted.")
 
 
 def extract_google_text(content: bytes) -> str:
@@ -340,3 +397,130 @@ def download_excel():
 
     from fastapi.responses import FileResponse
     return FileResponse(EXCEL_PATH, filename="consolidated_receipts.xlsx")
+
+
+def compute_sha256(file_bytes: bytes) -> str:
+    return hashlib.sha256(file_bytes).hexdigest()
+
+
+@app.get("/export/json")
+def export_json():
+    json_path = os.path.join(UPLOAD_FOLDER, "latest_receipts.json")
+    if not os.path.exists(json_path):
+        raise HTTPException(status_code=404, detail="No processed receipts found.")
+    return FileResponse(json_path, filename="receipts.json", media_type="application/json")
+
+
+@app.get("/export/csv")
+def export_csv():
+    json_path = os.path.join(UPLOAD_FOLDER, "latest_receipts.json")
+    if not os.path.exists(json_path):
+        raise HTTPException(status_code=404, detail="No processed receipts found.")
+
+    with open(json_path) as f:
+        receipts = json.load(f)
+
+    # Flatten for CSV
+    rows = []
+    for receipt in receipts:
+        for item in receipt.get("items", []):
+            rows.append({
+                "Merchant": receipt.get("merchant", ""),
+                "Date": receipt.get("date", ""),
+                "Total": receipt.get("total", 0.0),
+                "Description": item.get("description", ""),
+                "Amount": item.get("amount", 0.0),
+                "Category": item.get("category", ""),
+            })
+
+    df = pd.DataFrame(rows)
+    csv_bytes = df.to_csv(index=False).encode("utf-8")
+    return StreamingResponse(
+        iter([csv_bytes]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=receipts.csv"}
+    )
+
+
+@app.post("/auth/callback")
+async def google_auth(data: GoogleAuthRequest):
+    try:
+        idinfo = id_token.verify_oauth2_token(
+            data.credential,
+            requests.Request(),
+            GOOGLE_CLIENT_ID
+        )
+        # Create JWT payload
+        payload = {
+            "email": idinfo.get("email"),
+            "name": idinfo.get("name"),
+            "exp": datetime.utcnow() + timedelta(hours=12)
+        }
+        token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+        return {
+            "success": True,
+            "token": token,
+            "name": idinfo.get("name"),
+            "email": idinfo.get("email"),
+            "picture": idinfo.get("picture"),
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# @router.post("/process")
+@app.post("/process")
+async def process_from_supabase(request_data: SupabaseProcessRequest, db: Session = Depends(get_db)):
+    try:
+        contents = base64.b64decode(request_data.file_base64)
+        file_hash = compute_sha256(contents)
+
+        print("Coming Here")
+        # Cache check
+        cached = db.query(CachedResult).filter(CachedResult.file_hash == file_hash).first()
+        if cached:
+            parsed = json.loads(cached.json_data)
+        else:
+            temp_path = os.path.join(UPLOAD_FOLDER, f"temp_{uuid.uuid4().hex}.png")
+            with open(temp_path, "wb") as f:
+                f.write(contents)
+
+            extracted_text = extract_google_text(contents)
+            print(extracted_text)
+            json_path = os.path.join(JSON_FOLDER, f"{uuid.uuid4().hex}.json")
+            await parse_with_deepseek(extracted_text, json_path)
+
+            with open(json_path) as f:
+                raw = f.read()
+
+            try:
+                parsed = json.loads(raw)
+            except:
+                parsed = json.loads(sanitize_json_string(raw))
+
+            db.add(CachedResult(file_hash=file_hash, json_data=json.dumps(parsed)))
+            db.commit()
+            os.remove(temp_path)
+
+        receipt = parsed.get("ReceiptInfo", {})
+        items = receipt.get("ITEMS", [])
+
+        # Return format compatible with Supabase Edge Function
+        return {
+            "merchant": receipt.get("merchant", ""),
+            "total": receipt.get("total", 0.0),
+            "items": [
+                {
+                    "description": item.get("description", ""),
+                    "amount": item.get("totalPrice", 0.0),
+                    "category": item.get("category", ""),
+                }
+                for item in items
+            ]
+        }
+
+    except Exception as e:
+        print(f"Error processing base64 file: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to process receipt.")
+
+
