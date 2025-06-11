@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 import convert
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from typing import List, Optional
 from google.cloud import vision
 from sqlalchemy.orm import Session
@@ -24,6 +26,8 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 import jwt
 from datetime import datetime, timedelta
+import base64
+
 
 
 from fastapi.responses import StreamingResponse, FileResponse
@@ -55,6 +59,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class SupabaseProcessRequest(BaseModel):
+    file_id: str
+    file_name: str
+    user_id: str
+    file_base64: str
 
 # Constants
 #EXCEL_PATH = "structured_receipt.xlsx"
@@ -101,7 +110,12 @@ def sanitize_json_string(raw: str) -> str:
 
     return raw
 
-
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
 
 
 # @app.post("/upload")
@@ -453,3 +467,61 @@ async def google_auth(data: GoogleAuthRequest):
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+#@router.post("/process")
+@app.post("/process")
+async def process_from_supabase(request_data: SupabaseProcessRequest, db: Session = Depends(get_db)):
+    try:
+        contents = base64.b64decode(request_data.file_base64)
+        file_hash = compute_sha256(contents)
+
+        print("Coming Here")
+        # Cache check
+        cached = db.query(CachedResult).filter(CachedResult.file_hash == file_hash).first()
+        if cached:
+            parsed = json.loads(cached.json_data)
+        else:
+            temp_path = os.path.join(UPLOAD_FOLDER, f"temp_{uuid.uuid4().hex}.png")
+            with open(temp_path, "wb") as f:
+                f.write(contents)
+
+            extracted_text = extract_google_text(contents)
+            print(extracted_text)
+            json_path = os.path.join(JSON_FOLDER, f"{uuid.uuid4().hex}.json")
+            await parse_with_deepseek(extracted_text, json_path)
+
+            with open(json_path) as f:
+                raw = f.read()
+
+            try:
+                parsed = json.loads(raw)
+            except:
+                parsed = json.loads(sanitize_json_string(raw))
+
+            db.add(CachedResult(file_hash=file_hash, json_data=json.dumps(parsed)))
+            db.commit()
+            os.remove(temp_path)
+
+        receipt = parsed.get("ReceiptInfo", {})
+        items = receipt.get("ITEMS", [])
+
+        # Return format compatible with Supabase Edge Function
+        return {
+            "merchant": receipt.get("merchant", ""),
+            "total": receipt.get("total", 0.0),
+            "items": [
+                {
+                    "description": item.get("description", ""),
+                    "amount": item.get("totalPrice", 0.0),
+                    "category": item.get("category", ""),
+                }
+                for item in items
+            ]
+        }
+
+    except Exception as e:
+        print(f"Error processing base64 file: {str(e)}")
+        raise HTTPException(status_code=400, detail="Failed to process receipt.")
+
+
