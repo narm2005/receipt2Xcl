@@ -20,7 +20,6 @@ langchain
 sentence_transformers
 numpy
 faiss-cpu
-pickle5
 pandas
 nervaluate
 slowapi
