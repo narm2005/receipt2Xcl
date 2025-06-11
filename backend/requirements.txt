@@ -10,8 +10,6 @@ httpx
 langdetect
 openai
 dotenv
-paddleocr
-paddlepaddle
 openpyxl
 opencv-python
 transformers
