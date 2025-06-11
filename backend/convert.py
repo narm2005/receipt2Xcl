@@ -8,8 +8,6 @@ from langchain.prompts import PromptTemplate
 from langchain.prompts.few_shot import FewShotPromptTemplate
 # from langchain.chat_models import ChatOpenAI
 from chatdeepseek import ChatDeepSeek
-import os
-import openai
 import typing
 
 # local prompt_examples module
