@@ -27,6 +27,7 @@ from google.auth.transport import requests
 import jwt
 from datetime import datetime, timedelta
 import base64
+import tempfile
 
 
 
@@ -38,7 +39,8 @@ load_dotenv()
 #GOOGLE_APPLICATION_CREDENTIALS="google_cloud_credentials.json"
 # Read JSON from environment
 credentials_info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
-
+# creds_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+# credentials_info = json.loads(creds_json_str)
 # Write to a temporary file (if required by library)
 with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp:
     json.dump(credentials_info, temp)
