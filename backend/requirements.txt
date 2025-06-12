@@ -1,16 +1,13 @@
 fastapi
 uvicorn
 pytesseract
-pillow
+python-multipart
 requests
 pandas
 openpyxl
 jinja2
-httpx
 dotenv
 openpyxl
-opencv-python
-torch
 easyocr
 pydantic
 typing
@@ -18,7 +15,6 @@ enum34
 typing
 langchain
 sentence_transformers
-numpy
 faiss-cpu
 pandas
 nervaluate
