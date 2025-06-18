@@ -1,9 +1,4 @@
 
-import cv2
-import numpy as np
-import torch
-from PIL import Image
-import httpx
 import pandas as pd
 import uuid
 import os
@@ -69,11 +64,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class SupabaseProcessRequest(BaseModel):
+class SupabaseFilePayload(BaseModel):
     file_id: str
     file_name: str
     user_id: str
-    file_base64: str
+    content_base64: str
+
+class SupabaseBulkRequest(BaseModel):
+    files: List[SupabaseFilePayload]
 
 # Constants
 #EXCEL_PATH = "structured_receipt.xlsx"
@@ -353,58 +351,119 @@ async def google_auth(data: GoogleAuthRequest):
 
 
 #@router.post("/process")
+# @app.post("/process")
+# async def process_from_supabase(request_data: SupabaseProcessRequest, db: Session = Depends(get_db)):
+#     try:
+#         contents = base64.b64decode(request_data.file_base64)
+#         file_hash = compute_sha256(contents)
+#
+#         print("Coming Here")
+#         # Cache check
+#         cached = db.query(CachedResult).filter(CachedResult.file_hash == file_hash).first()
+#         if cached:
+#             parsed = json.loads(cached.json_data)
+#         else:
+#             temp_path = os.path.join(UPLOAD_FOLDER, f"temp_{uuid.uuid4().hex}.png")
+#             with open(temp_path, "wb") as f:
+#                 f.write(contents)
+#
+#             extracted_text = extract_google_text(contents)
+#             print(extracted_text)
+#             json_path = os.path.join(JSON_FOLDER, f"{uuid.uuid4().hex}.json")
+#             await parse_with_deepseek(extracted_text, json_path)
+#
+#             with open(json_path) as f:
+#                 raw = f.read()
+#
+#             try:
+#                 parsed = json.loads(raw)
+#             except:
+#                 parsed = json.loads(sanitize_json_string(raw))
+#
+#             db.add(CachedResult(file_hash=file_hash, json_data=json.dumps(parsed)))
+#             db.commit()
+#             os.remove(temp_path)
+#
+#         receipt = parsed.get("ReceiptInfo", {})
+#         items = receipt.get("ITEMS", [])
+#
+#         # Return format compatible with Supabase Edge Function
+#         return {
+#             "merchant": receipt.get("merchant", ""),
+#             "total": receipt.get("total", 0.0),
+#             "items": [
+#                 {
+#                     "description": item.get("description", ""),
+#                     "amount": item.get("totalPrice", 0.0),
+#                     "category": item.get("category", ""),
+#                 }
+#                 for item in items
+#             ]
+#         }
+#
+#     except Exception as e:
+#         print(f"Error processing base64 file: {str(e)}")
+#         raise HTTPException(status_code=400, detail="Failed to process receipt.")
+
+
 @app.post("/process")
-async def process_from_supabase(request_data: SupabaseProcessRequest, db: Session = Depends(get_db)):
-    try:
-        contents = base64.b64decode(request_data.file_base64)
-        file_hash = compute_sha256(contents)
+async def process_from_supabase(request_data: SupabaseBulkRequest, db: Session = Depends(get_db)):
+    results = []
 
-        print("Coming Here")
-        # Cache check
-        cached = db.query(CachedResult).filter(CachedResult.file_hash == file_hash).first()
-        if cached:
-            parsed = json.loads(cached.json_data)
-        else:
-            temp_path = os.path.join(UPLOAD_FOLDER, f"temp_{uuid.uuid4().hex}.png")
-            with open(temp_path, "wb") as f:
-                f.write(contents)
+    for file in request_data.files:
+        try:
+            contents = base64.b64decode(file.content_base64)
+            file_hash = compute_sha256(contents)
 
-            extracted_text = extract_google_text(contents)
-            print(extracted_text)
-            json_path = os.path.join(JSON_FOLDER, f"{uuid.uuid4().hex}.json")
-            await parse_with_deepseek(extracted_text, json_path)
+            # Check for cached result
+            cached = db.query(CachedResult).filter(CachedResult.file_hash == file_hash).first()
+            if cached:
+                parsed = json.loads(cached.json_data)
+            else:
+                temp_path = os.path.join(UPLOAD_FOLDER, f"temp_{uuid.uuid4().hex}.png")
+                with open(temp_path, "wb") as f:
+                    f.write(contents)
 
-            with open(json_path) as f:
-                raw = f.read()
+                extracted_text = extract_google_text(contents)
+                json_path = os.path.join(JSON_FOLDER, f"{uuid.uuid4().hex}.json")
+                await parse_with_deepseek(extracted_text, json_path)
 
-            try:
-                parsed = json.loads(raw)
-            except:
-                parsed = json.loads(sanitize_json_string(raw))
+                with open(json_path) as f:
+                    raw = f.read()
 
-            db.add(CachedResult(file_hash=file_hash, json_data=json.dumps(parsed)))
-            db.commit()
-            os.remove(temp_path)
+                try:
+                    parsed = json.loads(raw)
+                except:
+                    parsed = json.loads(sanitize_json_string(raw))
 
-        receipt = parsed.get("ReceiptInfo", {})
-        items = receipt.get("ITEMS", [])
+                db.add(CachedResult(file_hash=file_hash, json_data=json.dumps(parsed)))
+                db.commit()
+                os.remove(temp_path)
 
-        # Return format compatible with Supabase Edge Function
-        return {
-            "merchant": receipt.get("merchant", ""),
-            "total": receipt.get("total", 0.0),
-            "items": [
-                {
-                    "description": item.get("description", ""),
-                    "amount": item.get("totalPrice", 0.0),
-                    "category": item.get("category", ""),
-                }
-                for item in items
-            ]
-        }
+            receipt = parsed.get("ReceiptInfo", {})
+            items = receipt.get("ITEMS", [])
 
-    except Exception as e:
-        print(f"Error processing base64 file: {str(e)}")
-        raise HTTPException(status_code=400, detail="Failed to process receipt.")
+            results.append({
+                "file_id": file.file_id,
+                "file_name": file.file_name,
+                "merchant": receipt.get("merchant", ""),
+                "total": receipt.get("total", 0.0),
+                "items": [
+                    {
+                        "description": item.get("description", ""),
+                        "amount": item.get("totalPrice", 0.0),
+                        "category": item.get("category", "")
+                    }
+                    for item in items
+                ]
+            })
 
+        except Exception as e:
+            print(f"Error processing file {file.file_name}: {str(e)}")
+            results.append({
+                "file_id": file.file_id,
+                "file_name": file.file_name,
+                "error": "Failed to process file"
+            })
 
+    return {"receipts": results}
