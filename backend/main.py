@@ -60,6 +60,10 @@ HEADERS = {
 
 app = FastAPI()
 
+@app.get("/")
+def home():
+    return {"message": "Hello, Render!"}
+
 client = vision.ImageAnnotatorClient()
 
 app.add_middleware(
