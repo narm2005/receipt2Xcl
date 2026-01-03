@@ -13,7 +13,7 @@ pydantic
 typing
 enum34
 typing
-langchain==0.0.349
+langchain==0.1.15
 sentence_transformers
 faiss-cpu
 pandas
