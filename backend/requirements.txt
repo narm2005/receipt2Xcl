@@ -22,5 +22,10 @@ slowapi
 google-cloud-vision
 google-cloud-firestore
 PyJWT
+paddleocr
+paddlepaddle
+python-multipart
+sqlalchemy
+databases
 
 

@@ -23,6 +23,12 @@ import jwt
 from datetime import datetime, timedelta
 import base64
 import tempfile
+from paddleocr import PaddleOCR
+
+
+
+ocr = PaddleOCR(use_angle_cls=True, lang='en')
+
 
 
 
@@ -31,18 +37,18 @@ SECRET_KEY = "a-string-secret-at-least-256-bits-long"  # Use a strong secret in 
 
 
 load_dotenv()
-#GOOGLE_APPLICATION_CREDENTIALS="google_cloud_credentials.json"
+GOOGLE_APPLICATION_CREDENTIALS_jSON="google_cloud_credentials.json"
 # Read JSON from environment
-credentials_info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
-# creds_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
-# credentials_info = json.loads(creds_json_str)
-# Write to a temporary file (if required by library)
-with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp:
-    json.dump(credentials_info, temp)
-    temp.flush()
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp.name
-
-GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')  # Replace with your client ID
+# credentials_info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
+# # creds_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+# # credentials_info = json.loads(creds_json_str)
+# # Write to a temporary file (if required by library)
+# with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp:
+#     json.dump(credentials_info, temp)
+#     temp.flush()
+#     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp.name
+#
+# GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')  # Replace with your client ID
 
 DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -424,9 +430,14 @@ async def process_from_supabase(request_data: SupabaseBulkRequest, db: Session =
                 with open(temp_path, "wb") as f:
                     f.write(contents)
 
-                extracted_text = extract_google_text(contents)
+                #extracted_text = extract_google_text(contents)
+                extracted_text = ocr.ocr(temp_path)
+                #print("extracted text: ", extracted_text)
+
                 json_path = os.path.join(JSON_FOLDER, f"{uuid.uuid4().hex}.json")
                 await parse_with_deepseek(extracted_text, json_path)
+                #print("json: ", json_path)
+                #print("extracted text: ", extracted_text)
 
                 with open(json_path) as f:
                     raw = f.read()
