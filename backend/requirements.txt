@@ -22,8 +22,8 @@ slowapi
 google-cloud-vision
 google-cloud-firestore
 PyJWT
-paddleocr==2.7.0
-paddlepaddle==2.6.1
+paddleocr
+paddlepaddle
 python-multipart
 sqlalchemy
 databases
