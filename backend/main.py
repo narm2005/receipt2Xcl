@@ -26,6 +26,7 @@ import tempfile
 from paddleocr import PaddleOCR
 
 
+app = FastAPI()
 
 
 ocr = PaddleOCR(use_angle_cls=True, lang='en')
@@ -59,17 +60,11 @@ HEADERS = {
 }
 
 
-app = FastAPI()
 
 @app.get("/")
 def home():
     return {"message": "Hello, Render!"}
 
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("PORT", 8000))
-    print(f"Example app listening on port {port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
 
 client = vision.ImageAnnotatorClient()
 
