@@ -24,17 +24,24 @@ from datetime import datetime, timedelta
 import base64
 import tempfile
 from paddleocr import PaddleOCR
+from fastapi.responses import StreamingResponse, FileResponse
 
 
 app = FastAPI()
 
 
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
+#ocr = PaddleOCR(use_angle_cls=True, lang='en')
 
 
+ocr = None
+
+def get_ocr():
+    global ocr
+    if ocr is None:
+        ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
+    return ocr
 
 
-from fastapi.responses import StreamingResponse, FileResponse
 SECRET_KEY = "a-string-secret-at-least-256-bits-long"  # Use a strong secret in production
 
 
@@ -437,7 +444,8 @@ async def process_from_supabase(request_data: SupabaseBulkRequest, db: Session =
                     f.write(contents)
 
                 #extracted_text = extract_google_text(contents)
-                extracted_text = ocr.ocr(temp_path)
+                extracted_text = get_ocr().ocr(temp_path)
+
                 #print("extracted text: ", extracted_text)
 
                 json_path = os.path.join(JSON_FOLDER, f"{uuid.uuid4().hex}.json")
