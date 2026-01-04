@@ -46,7 +46,7 @@ SECRET_KEY = "a-string-secret-at-least-256-bits-long"  # Use a strong secret in 
 
 
 load_dotenv()
-GOOGLE_APPLICATION_CREDENTIALS_jSON="google_cloud_credentials.json"
+#GOOGLE_APPLICATION_CREDENTIALS_jSON="google_cloud_credentials.json"
 # Read JSON from environment
 # credentials_info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
 # # creds_json_str = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
@@ -73,7 +73,7 @@ def home():
     return {"message": "Hello, Render!"}
 
 
-client = vision.ImageAnnotatorClient()
+#client = vision.ImageAnnotatorClient()
 
 app.add_middleware(
     CORSMiddleware,
@@ -106,8 +106,8 @@ os.makedirs(JSON_FOLDER, exist_ok=True)
 
 
 
-class GoogleAuthRequest(BaseModel):
-    credential: str
+# class GoogleAuthRequest(BaseModel):
+#     credential: str
 
 
 def sanitize_json(raw: str) -> dict:
@@ -270,13 +270,13 @@ async def upload_receipts(
     raise HTTPException(status_code=400, detail="No valid receipt data could be extracted.")
 
 
-def extract_google_text(content: bytes) -> str:
-    client = vision.ImageAnnotatorClient()
-    image = vision.Image(content=content)
-
-    # Only request TEXT_DETECTION to reduce costs
-    response = client.text_detection(image=image)
-    return response.text_annotations[0].description if response.text_annotations else ""
+# def extract_google_text(content: bytes) -> str:
+#     client = vision.ImageAnnotatorClient()
+#     image = vision.Image(content=content)
+#
+#     # Only request TEXT_DETECTION to reduce costs
+#     response = client.text_detection(image=image)
+#     return response.text_annotations[0].description if response.text_annotations else ""
 
 async def parse_with_deepseek(text: str, json_path: str) -> dict:
 
@@ -343,30 +343,30 @@ def export_csv():
         headers={"Content-Disposition": "attachment; filename=receipts.csv"}
     )
 
-@app.post("/auth/callback")
-async def google_auth(data: GoogleAuthRequest):
-    try:
-        idinfo = id_token.verify_oauth2_token(
-            data.credential,
-            requests.Request(),
-            GOOGLE_CLIENT_ID
-        )
-        # Create JWT payload
-        payload = {
-            "email": idinfo.get("email"),
-            "name": idinfo.get("name"),
-            "exp": datetime.utcnow() + timedelta(hours=12)
-        }
-        token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
-        return {
-            "success": True,
-            "token": token,
-            "name": idinfo.get("name"),
-            "email": idinfo.get("email"),
-            "picture": idinfo.get("picture"),
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+# @app.post("/auth/callback")
+# async def google_auth(data: GoogleAuthRequest):
+#     try:
+#         idinfo = id_token.verify_oauth2_token(
+#             data.credential,
+#             requests.Request(),
+#             GOOGLE_CLIENT_ID
+#         )
+#         # Create JWT payload
+#         payload = {
+#             "email": idinfo.get("email"),
+#             "name": idinfo.get("name"),
+#             "exp": datetime.utcnow() + timedelta(hours=12)
+#         }
+#         token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+#         return {
+#             "success": True,
+#             "token": token,
+#             "name": idinfo.get("name"),
+#             "email": idinfo.get("email"),
+#             "picture": idinfo.get("picture"),
+#         }
+#     except Exception as e:
+#         return {"success": False, "error": str(e)}
 
 
 #@router.post("/process")
