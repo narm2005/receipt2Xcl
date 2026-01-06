@@ -38,7 +38,7 @@ ocr = None
 def get_ocr():
     global ocr
     if ocr is None:
-        ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)
+        ocr = PaddleOCR(use_angle_cls=True, lang='en')
     return ocr
 
 
