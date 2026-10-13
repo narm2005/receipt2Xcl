@@ -272,7 +272,7 @@ def make_model(model="gpt-3.5-turbo-16k", temperature=1.00, openai_api_key="INSE
 
 
 def make_deepseek():
-    return ChatDeepSeek(api_key="sk-3adeccc34e8a43c08019248994e83565")
+    return ChatDeepSeek(api_key="")
 
 
 def make_chain(fewshot_prompt, model, receiptParser):
