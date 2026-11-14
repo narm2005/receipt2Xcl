@@ -9,3 +9,5 @@ langchain-core
 google-cloud-vision
 google-auth
 PyJWT
+openpyxl
+psycopg[binary]
