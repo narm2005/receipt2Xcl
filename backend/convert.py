@@ -3,11 +3,12 @@ from pydantic import BaseModel, Field, field_validator
 from typing import List
 from enum import Enum
 import math
-from langchain.output_parsers import PydanticOutputParser
-from langchain.prompts import PromptTemplate
-from langchain.prompts.few_shot import FewShotPromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import FewShotPromptTemplate
 # from langchain.chat_models import ChatOpenAI
 from chatdeepseek import ChatDeepSeek
+import os
 import typing
 
 # local prompt_examples module
@@ -272,7 +273,10 @@ def make_model(model="gpt-3.5-turbo-16k", temperature=1.00, openai_api_key="INSE
 
 
 def make_deepseek():
-    return ChatDeepSeek(api_key="")
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise RuntimeError("DEEPSEEK_API_KEY is not set")
+    return ChatDeepSeek(api_key=api_key, api_url=os.getenv("DEEPSEEK_API_URL") or "https://api.deepseek.com/v1/chat/completions")
 
 
 def make_chain(fewshot_prompt, model, receiptParser):
