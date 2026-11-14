@@ -38,7 +38,7 @@ class ChatDeepSeek(BaseChatModel):
             "temperature": self.temperature
         }
 
-        response = requests.post(self.api_url, headers=headers, json=payload)
+        response = requests.post(self.api_url, headers=headers, json=payload, timeout=90)
         if response.status_code != 200:
             raise ValueError(f"DeepSeek API error {response.status_code}: {response.text}")
 

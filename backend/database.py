@@ -1,11 +1,15 @@
+import os
+
 from sqlalchemy import create_engine, Column, Integer, String, Date, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-DATABASE_URL = "sqlite:///./test.db"  # For production, use PostgreSQL URL
+# Set DATABASE_URL to a Postgres URL in production; SQLite is the local default.
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./local.db")
 
 engine = create_engine(
-    DATABASE_URL, connect_args={"check_same_thread": False}  # Only for SQLite
+    DATABASE_URL,
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -37,6 +41,5 @@ class UploadLog(Base):
     ip = Column(String(45), index=True, nullable=False)
     upload_date = Column(Date, index=True, nullable=False)
 
-# Create tables if not exist
-if __name__ == "__main__":
-    Base.metadata.create_all(bind=engine)
+# Create tables if they do not exist yet (safe to run on every start).
+Base.metadata.create_all(bind=engine)
