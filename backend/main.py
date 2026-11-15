@@ -198,7 +198,7 @@ async def upload_receipts(
         try:
             receipts.append({"file_name": file.filename, **summarize(await extract_receipt(contents, db))})
         except Exception as e:
-            print(f"Error processing an uploaded file: {type(e).__name__}")
+            print(f"Error processing an uploaded file: {type(e).__name__}: {str(e)[:300]}")
             receipts.append({"file_name": file.filename, "error": "Failed to process file"})
 
     if not any("error" not in r for r in receipts):
@@ -223,7 +223,7 @@ async def process_from_supabase(request_data: SupabaseBulkRequest, db: Session =
             summary = summarize(await extract_receipt(contents, db))
             results.append({"file_id": file.file_id, "file_name": file.file_name, **summary})
         except Exception as e:
-            print(f"Error processing file {file.file_id}: {type(e).__name__}")
+            print(f"Error processing file {file.file_id}: {type(e).__name__}: {str(e)[:300]}")
             results.append({"file_id": file.file_id, "file_name": file.file_name, "error": "Failed to process file"})
 
     # "files" is what the edge function reads; "receipts" is kept for older callers.
