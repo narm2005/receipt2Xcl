@@ -84,6 +84,11 @@ def summarize(parsed: dict) -> dict:
         "merchant": receipt.get("merchant", ""),
         "date": receipt.get("receiptDate", ""),
         "total": receipt.get("total", 0.0),
+        "gstin": (receipt.get("gstin") or "").upper().replace(" ", ""),
+        "invoiceNumber": receipt.get("invoiceNumber") or "",
+        "cgst": receipt.get("cgst") or 0.0,
+        "sgst": receipt.get("sgst") or 0.0,
+        "igst": receipt.get("igst") or 0.0,
         "items": [
             {
                 "description": item.get("unabbreviatedDescription") or item.get("description", ""),

@@ -154,7 +154,7 @@ def test_exports_and_premium_gates():
     ws = load_workbook(io.BytesIO(xlsx.content)).active
     assert ws["F2"].value == "Milk" and ws["G3"].value == 400
     data = client.get("/analytics", headers=headers).json()["analytics"]
-    assert data[0]["month_year"] == "2026-11" and data[0]["total_amount"] == 450.5
+    assert data[0]["month_year"] == "2026-02" and data[0]["total_amount"] == 450.5
 
 
 def test_rejects_wrong_type_and_failed_ocr():
@@ -194,3 +194,68 @@ def test_asymmetric_supabase_keys(monkeypatch):
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {good}"}).json()["email"] == "gil@example.com"
     forged = supabase_token("gil", key=ec.generate_private_key(ec.SECP256R1()), alg="ES256")
     assert client.get("/auth/me", headers={"Authorization": f"Bearer {forged}"}).status_code == 401
+
+
+def _make_premium(user_id):
+    from database import SessionLocal, User
+    db = SessionLocal()
+    db.get(User, user_id).tier = "premium"
+    db.commit()
+    db.close()
+
+
+def test_gst_fields_edit_and_monthly_export():
+    headers, user = sign_in("hal")
+    _make_premium(user["id"])
+    rid = upload(headers, b"hal-1").json()["receipts"][0]["fileId"]
+    r = client.patch(f"/receipts/{rid}", headers=headers, json={
+        "merchant": "Hal Traders", "date": "05/10/2026", "total": 1050, "gstin": "33abcde1234f1z5",
+        "invoiceNumber": "INV-9", "cgst": 25, "sgst": 25,
+        "items": [{"description": "Cement bag", "amount": 1000, "category": "supplies"}],
+    })
+    assert r.status_code == 200, r.text
+    d = r.json()["processed_data"]
+    assert d["merchant"] == "Hal Traders" and d["gstin"] == "33ABCDE1234F1Z5" and d["items"][0]["amount"] == 1000
+    assert r.json()["total"] == 1050 and r.json()["item_count"] == 1
+    upload(headers, b"hal-2")  # dated 11/02/2026 (11 Feb) by the fake parser
+
+    csv_text = client.get("/receipts/export?format=csv&month=2026-10", headers=headers).text
+    assert "Cement bag" in csv_text and "INV-9" in csv_text and "Rice 5kg" not in csv_text
+    assert client.get("/receipts/export?format=csv&month=2025-01", headers=headers).status_code == 404
+
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(client.get("/receipts/export?format=xlsx", headers=headers).content))
+    gst = wb["GST summary"]
+    assert [c.value for c in gst[1]][:5] == ["Date", "Merchant", "GSTIN", "Invoice No", "Taxable Value"]
+    assert gst["E2"].value == 1000 and gst["F2"].value == 25 and gst["A4"].value == "Total"
+
+    eve, _ = sign_in("eve")
+    assert client.patch(f"/receipts/{rid}", headers=eve, json={"merchant": "x"}).status_code == 404
+
+
+def test_fair_use_limits(monkeypatch):
+    headers, user = sign_in("ivy")
+    _make_premium(user["id"])
+    monkeypatch.setattr(routes, "DAILY_FILE_LIMIT", 2)
+    assert upload(headers, b"ivy-1").status_code == 200
+    rid = upload(headers, b"ivy-2").json()["receipts"][0]["fileId"]
+    client.delete(f"/receipts/{rid}", headers=headers)  # deleting does not give the quota back
+    r = upload(headers, b"ivy-3")
+    assert r.status_code == 429 and "today" in r.json()["detail"]
+    usage = client.get("/auth/me", headers=headers).json()["usage"]
+    assert usage["day_used"] == 2 and usage["month_limit"] == 1000
+    monkeypatch.setattr(routes, "DAILY_FILE_LIMIT", 100)
+    monkeypatch.setattr(routes, "MONTHLY_FILE_LIMIT", 2)
+    assert "month" in upload(headers, b"ivy-4").json()["detail"]
+
+
+def test_delete_account():
+    headers, user = sign_in("jon")
+    upload(headers, b"jon-1")
+    assert client.delete("/auth/me", headers=headers).json()["deleted"] is True
+    from database import Receipt, SessionLocal
+    db = SessionLocal()
+    assert db.query(Receipt).filter(Receipt.user_id == user["id"]).count() == 0
+    db.close()
+    again = client.get("/auth/me", headers=headers).json()  # a fresh, empty account if they sign in again
+    assert again["files_used"] == 0
