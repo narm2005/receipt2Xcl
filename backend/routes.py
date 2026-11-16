@@ -15,7 +15,7 @@ import requests
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, user_json
-from database import Receipt, UsageCounter, User, get_db
+from database import CaContact, EmailLog, Receipt, ShareLink, UsageCounter, User, get_db
 from processing import extract_receipt, summarize
 
 router = APIRouter()
@@ -102,6 +102,8 @@ def delete_account(user: User = Depends(get_current_user), db: Session = Depends
     uid = user.id
     db.query(Receipt).filter(Receipt.user_id == uid).delete(synchronize_session=False)
     db.query(UsageCounter).filter(UsageCounter.user_id == uid).delete(synchronize_session=False)
+    for model in (CaContact, ShareLink, EmailLog):
+        db.query(model).filter(model.user_id == uid).delete(synchronize_session=False)
     db.delete(user)
     db.commit()
 
@@ -316,27 +318,15 @@ def _export_rows(receipts: List[Receipt]) -> List[list]:
     return rows
 
 
-@router.get("/receipts/export")
-def export_receipts(
-    format: str = Query("csv", pattern="^(csv|xlsx|json)$"),
-    ids: Optional[str] = Query(None, description="Comma-separated receipt ids; all receipts if omitted"),
-    month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$", description="Only receipts dated in this month, e.g. 2026-11"),
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    if format in ("xlsx", "json") and user.tier != "premium":
-        raise HTTPException(status_code=403, detail="Excel and JSON exports are available on Premium.")
-    receipts = _owned_receipts(db, user, ids)
-    if month:
-        receipts = [r for r in receipts if _month_of(r) == month]
-    if not receipts:
-        raise HTTPException(status_code=404, detail="No processed receipts to export.")
+XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-    stamp = month or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+def build_export(receipts: List[Receipt], format: str, stamp: str) -> tuple:
+    """(bytes, media type, file name) for receipts as csv, xlsx or json."""
+    name = f"receipts-{stamp}.{format}"
     if format == "json":
         body = json.dumps([json.loads(r.data_json or "{}") for r in receipts], indent=2)
-        return Response(body, media_type="application/json",
-                        headers={"Content-Disposition": f'attachment; filename="receipts-{stamp}.json"'})
+        return body.encode("utf-8"), "application/json", name
 
     rows = _export_rows(receipts)
     if format == "csv":
@@ -345,8 +335,7 @@ def export_receipts(
         writer.writerow(EXPORT_COLUMNS)
         writer.writerows(rows)
         # BOM so Excel opens UTF-8 (e.g. ₹, accented merchant names) correctly
-        return Response("﻿" + buf.getvalue(), media_type="text/csv; charset=utf-8",
-                        headers={"Content-Disposition": f'attachment; filename="receipts-{stamp}.csv"'})
+        return ("\ufeff" + buf.getvalue()).encode("utf-8"), "text/csv; charset=utf-8", name
 
     from openpyxl import Workbook
 
@@ -370,9 +359,29 @@ def export_receipts(
         gst.column_dimensions[col].width = width
     out = io.BytesIO()
     wb.save(out)
-    return Response(out.getvalue(),
-                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": f'attachment; filename="receipts-{stamp}.xlsx"'})
+    return out.getvalue(), XLSX_TYPE, name
+
+
+@router.get("/receipts/export")
+def export_receipts(
+    format: str = Query("csv", pattern="^(csv|xlsx|json)$"),
+    ids: Optional[str] = Query(None, description="Comma-separated receipt ids; all receipts if omitted"),
+    month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$", description="Only receipts dated in this month, e.g. 2026-11"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if format in ("xlsx", "json") and user.tier != "premium":
+        raise HTTPException(status_code=403, detail="Excel and JSON exports are available on Premium.")
+    receipts = _owned_receipts(db, user, ids)
+    if month:
+        receipts = [r for r in receipts if _month_of(r) == month]
+    if not receipts:
+        raise HTTPException(status_code=404, detail="No processed receipts to export.")
+
+    stamp = month or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    content, media_type, filename = build_export(receipts, format, stamp)
+    return Response(content, media_type=media_type,
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 class ItemEdit(BaseModel):

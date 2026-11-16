@@ -97,6 +97,40 @@ class UsageCounter(Base):
     count = Column(Integer, nullable=False, default=0)
 
 
+class CaContact(Base):
+    """The user's accountant (CA), for 'Send to my CA'."""
+    __tablename__ = "ca_contacts"
+
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    name = Column(String(120), nullable=True)
+    whatsapp = Column(String(20), nullable=True)  # digits with country code, e.g. 919876543210
+    email = Column(String(320), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
+class ShareLink(Base):
+    """A private, expiring download link for a set of receipts (sent to the CA on WhatsApp)."""
+    __tablename__ = "share_links"
+
+    token = Column(String(64), primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    receipt_ids = Column(Text, nullable=False)  # comma-separated
+    format = Column(String(10), nullable=False)
+    label = Column(String(60), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+
+
+class EmailLog(Base):
+    """Emails sent to a CA, for the daily cap."""
+    __tablename__ = "email_logs"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    to_email = Column(String(320), nullable=False)
+    sent_at = Column(DateTime(timezone=True), index=True, nullable=False, default=_now)
+
+
 class CachedResult(Base):
     __tablename__ = "cached_results"
 
