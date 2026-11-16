@@ -12,7 +12,7 @@ class ChatDeepSeek(BaseChatModel):
     api_key: str = Field(..., description="DeepSeek API Key")
     model: str = "deepseek-chat"
     temperature: float = 0.7
-    api_url: str = "https://api.deepseek.com/v1/chat/completions"
+    api_url: str = "https://api.deepseek.com/chat/completions"
 
     def _convert_messages(self, messages: List[BaseMessage]) -> List[dict]:
         role_map = {

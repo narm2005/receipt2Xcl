@@ -276,7 +276,7 @@ def make_deepseek():
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise RuntimeError("DEEPSEEK_API_KEY is not set")
-    return ChatDeepSeek(api_key=api_key, api_url=os.getenv("DEEPSEEK_API_URL") or "https://api.deepseek.com/v1/chat/completions")
+    return ChatDeepSeek(api_key=api_key, api_url=os.getenv("DEEPSEEK_API_URL") or "https://api.deepseek.com/chat/completions")
 
 
 def make_chain(fewshot_prompt, model, receiptParser):
