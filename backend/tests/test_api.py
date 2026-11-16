@@ -259,3 +259,48 @@ def test_delete_account():
     db.close()
     again = client.get("/auth/me", headers=headers).json()  # a fresh, empty account if they sign in again
     assert again["files_used"] == 0
+
+
+def test_ca_contact_link_and_email(monkeypatch):
+    import ca
+    headers, user = sign_in("kim")
+    _make_premium(user["id"])
+    rid = upload(headers, b"kim-1").json()["receipts"][0]["fileId"]
+
+    assert client.put("/settings/ca", headers=headers, json={"whatsapp": "12"}).status_code == 422
+    assert client.put("/settings/ca", headers=headers, json={"email": "nope"}).status_code == 422
+    saved = client.put("/settings/ca", headers=headers,
+                       json={"name": "Ravi CA", "whatsapp": "098765 43210", "email": "ravi@ca.example"}).json()
+    assert saved["whatsapp"] == "919876543210" and saved["email_enabled"] is False
+    assert client.get("/settings/ca", headers=headers).json()["name"] == "Ravi CA"
+
+    # WhatsApp: a private link that opens without signing in, only for these receipts
+    link = client.post("/ca/link", headers=headers, json={"ids": [rid], "label": "Feb 2026"}).json()
+    token = link["url"].rsplit("/", 1)[1]
+    f = client.get(f"/s/{token}")
+    assert f.status_code == 200 and f.content[:2] == b"PK" and "receipts-feb-2026.xlsx" in f.headers["content-disposition"]
+    assert client.get("/s/not-a-real-token").status_code == 404
+    eve, _ = sign_in("eve")
+    assert client.post("/ca/link", headers=eve, json={"ids": [rid]}).status_code == 404
+
+    from database import SessionLocal, ShareLink
+    from datetime import datetime, timedelta, timezone
+    db = SessionLocal()
+    db.get(ShareLink, token).expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+    db.close()
+    assert client.get(f"/s/{token}").status_code == 404
+
+    # Email: off until configured, then sent with the file attached and a copy to the user
+    assert client.post("/ca/email", headers=headers, json={"ids": [rid]}).status_code == 503
+    monkeypatch.setenv("BREVO_API_KEY", "k")
+    monkeypatch.setenv("MAIL_FROM_EMAIL", "bills@slickreceipts.example")
+    sent = []
+    monkeypatch.setattr(ca, "send_email", lambda payload: sent.append(payload))
+    monkeypatch.setattr(ca, "CA_EMAILS_PER_DAY", 1)
+    r = client.post("/ca/email", headers=headers, json={"ids": [rid], "label": "Feb 2026"})
+    assert r.status_code == 200 and r.json()["sent_to"] == "ravi@ca.example"
+    p = sent[0]
+    assert p["to"][0]["email"] == "ravi@ca.example" and p["cc"][0]["email"] == "kim@example.com"
+    assert p["attachment"][0]["name"] == "receipts-feb-2026.xlsx" and "Feb 2026" in p["subject"]
+    assert client.post("/ca/email", headers=headers, json={"ids": [rid]}).status_code == 429
