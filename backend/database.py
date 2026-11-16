@@ -87,6 +87,16 @@ class Receipt(Base):
     created_at = Column(DateTime(timezone=True), index=True, nullable=False, default=_now)
 
 
+class UsageCounter(Base):
+    """Files processed per user per day ("2026-11-16") and per month ("2026-11"), India time.
+    Kept apart from receipts so deleting receipts does not give the quota back."""
+    __tablename__ = "usage_counters"
+
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    period = Column(String(10), primary_key=True)
+    count = Column(Integer, nullable=False, default=0)
+
+
 class CachedResult(Base):
     __tablename__ = "cached_results"
 

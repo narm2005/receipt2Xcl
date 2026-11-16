@@ -119,6 +119,12 @@ class ReceiptInfo(BaseModel):
     creditCardType: str = Field(default="", description="credit card type")
     totalDiscount: float = Field(default=0.00, description="total discount")
     tax: float = Field(description="tax amount")
+    # Indian GST bills
+    gstin: str = Field(default="", description="seller GSTIN, the 15-character GST number printed on the bill")
+    invoiceNumber: str = Field(default="", description="bill / invoice number")
+    cgst: float = Field(default=0.00, description="CGST amount")
+    sgst: float = Field(default=0.00, description="SGST or UTGST amount")
+    igst: float = Field(default=0.00, description="IGST amount")
     total: float = Field(description="total amount paid")
     ITEMS: List[Item]
 
@@ -190,7 +196,7 @@ class ReceiptInfo(BaseModel):
     Ensures that the information is a float
     """
 
-    @field_validator('tax', 'total', 'totalDiscount', mode='before')
+    @field_validator('tax', 'total', 'totalDiscount', 'cgst', 'sgst', 'igst', mode='before')
     @classmethod
     def validate_float_ReceiptInfo(cls, input_value: typing.Any) -> float:
         return_value = 0.00
@@ -212,7 +218,7 @@ class ReceiptInfo(BaseModel):
     """
 
     @field_validator('merchant', 'address', 'city', 'state', 'phoneNumber',
-                     'receiptDate', 'receiptTime', 'creditCardType', mode='after')
+                     'receiptDate', 'receiptTime', 'creditCardType', 'gstin', 'invoiceNumber', mode='after')
     @classmethod
     def validate_string_ReceiptInfo(cls, input_value: str) -> str:
         return_value = input_value.replace("<UNKNOWN>", "")
@@ -241,6 +247,8 @@ def get_prompt_prefix():
     Please wrap all numeric values in double-quotes. Some items may be priced at a weighted rate, such as "per pound" or "per ounce". 
     Text can be used for multiple fields. Please use double-quotes for all string values. 
     If there are double-quotes inside string values, please escape those characters with the "\" character.
+    For Indian bills, fill gstin with the seller's GSTIN, invoiceNumber with the bill or invoice number,
+    and cgst, sgst and igst with the tax amounts (not the rates). Leave them empty or 0 if not printed.
 
     {format_instructions}
 
