@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import CaContact, EmailLog, Receipt, ShareLink, User, get_db
 from routes import build_export
+from settings import get_settings, money
 
 router = APIRouter()
 
@@ -201,7 +202,7 @@ def email_ca(body: SendIn, user: User = Depends(get_current_user), db: Session =
         "htmlContent": (
             f"<p>Hello{(' ' + html.escape(ca.name)) if ca.name else ''},</p>"
             f"<p>{html.escape(sender_name)} has sent you {len(receipts)} {html.escape(what)} "
-            f"(total ₹{total:,.2f}). The file is attached.</p>"
+            f"(total {html.escape(money(total, get_settings(db)['currency']))}). The file is attached.</p>"
             f"<p>Reply to this email to reach {html.escape(sender_name)} directly.</p>"
             "<p>Sent with SlickReceipts</p>"
         ),

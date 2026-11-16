@@ -146,6 +146,16 @@ class Feedback(Base):
     created_at = Column(DateTime(timezone=True), index=True, nullable=False, default=_now)
 
 
+class AppSetting(Base):
+    """Settings an admin can change from the app (currency, Premium prices), stored as JSON values."""
+    __tablename__ = "app_settings"
+
+    key = Column(String(50), primary_key=True)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    updated_by = Column(String(320), nullable=True)
+
+
 class CachedResult(Base):
     __tablename__ = "cached_results"
 
