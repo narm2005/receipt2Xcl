@@ -60,20 +60,77 @@ async def parse_with_deepseek(text: str) -> dict:
         return json.loads(sanitize_json_string(raw))
 
 
+class NotAReceipt(ValueError):
+    """The upload is readable but is not a bill or receipt (a selfie, a screenshot, a page of text...)."""
+
+    message = "This doesn't look like a receipt or bill. Please upload a clear photo of the bill."
+
+
+# Words that appear on almost every bill, in English and a few Indian languages.
+RECEIPT_WORDS = re.compile(
+    r"\b(total|sub ?total|grand total|amount|amt|qty|quantity|rate|price|mrp|bill|invoice|receipt|cash|card|upi|"
+    r"paid|change|balance|tax|gst|gstin|cgst|sgst|igst|vat|net|discount|item|items|rs\.?|inr|order|payment|txn)\b"
+    r"|₹|कुल|बिल|रसीद|மொத்தம்|ரசீது|మొత్తం|ಒಟ್ಟು|മൊത്തം",
+    re.IGNORECASE,
+)
+PRICE = re.compile(r"\d+[.,]\d{2}\b")
+REJECTED = {"not_receipt": True}
+
+
+def looks_like_receipt_text(text: str) -> bool:
+    """Cheap check on the OCR text before paying for the LLM: a bill has bill words or several prices."""
+    text = text or ""
+    if len(text.strip()) < 8:
+        return False
+    words = len(RECEIPT_WORDS.findall(text))
+    prices = len(PRICE.findall(text))
+    return words >= 2 or (words >= 1 and bool(re.search(r"\d{2,}", text))) or prices >= 3
+
+
+def has_receipt_data(parsed: dict) -> bool:
+    """After structuring: a receipt has a total or at least one priced item."""
+    info = (parsed or {}).get("ReceiptInfo") or {}
+    try:
+        total = float(info.get("total") or 0)
+    except (TypeError, ValueError):
+        total = 0.0
+    priced = [i for i in info.get("ITEMS") or [] if _num(i.get("totalPrice")) > 0]
+    return total > 0 or bool(priced)
+
+
+def _num(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 async def extract_receipt(contents: bytes, db: Session) -> dict:
-    """OCR + structure one receipt, using the cache so the same image is never paid for twice."""
+    """OCR + structure one receipt, using the cache so the same image is never paid for twice.
+    Raises NotAReceipt for photos that aren't bills, and remembers them so a retry costs nothing."""
     file_hash = compute_sha256(contents)
     cached = db.query(CachedResult).filter(CachedResult.file_hash == file_hash).first()
     if cached:
-        return json.loads(cached.json_data)
+        parsed = json.loads(cached.json_data)
+        if parsed == REJECTED:
+            raise NotAReceipt()
+        return parsed
 
     extracted_text = extract_google_text(contents)
-    if not extracted_text.strip():
-        raise ValueError("No text found in the image")
+    if not extracted_text.strip() or not looks_like_receipt_text(extracted_text):
+        _remember(db, file_hash, REJECTED)
+        raise NotAReceipt()
     parsed = await parse_with_deepseek(extracted_text)
+    if not has_receipt_data(parsed):
+        _remember(db, file_hash, REJECTED)
+        raise NotAReceipt()
+    _remember(db, file_hash, parsed)
+    return parsed
+
+
+def _remember(db: Session, file_hash: str, parsed: dict) -> None:
     db.add(CachedResult(file_hash=file_hash, json_data=json.dumps(parsed)))
     db.commit()
-    return parsed
 
 
 def summarize(parsed: dict) -> dict:

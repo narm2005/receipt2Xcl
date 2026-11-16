@@ -38,7 +38,7 @@ async def fake_parse(text):
     ]}}
 
 
-processing.extract_google_text = lambda content: "RECEIPT TEXT"
+processing.extract_google_text = lambda content: "RECEIPT TOTAL 450.50"
 processing.parse_with_deepseek = fake_parse
 
 
@@ -358,3 +358,65 @@ def test_admin_settings_and_users(monkeypatch):
     assert client.get("/admin/users", headers=other).status_code == 403
     # put the defaults back for other tests
     client.put("/admin/config", headers=headers, json={"currency": "INR", "premium_monthly": 199, "premium_yearly": 1999})
+
+
+def test_rejects_photos_that_are_not_receipts():
+    from processing import has_receipt_data, looks_like_receipt_text
+    # Real bills pass the text check; holiday photos, selfies and memes don't.
+    assert looks_like_receipt_text("DMART\nMilk 1L 52.00\nRice 5kg 410.00\nTOTAL 462.00\nUPI")
+    assert looks_like_receipt_text("TAX INVOICE GSTIN 33ABCDE1234F1Z5 Amount Rs 1,250.00")
+    assert looks_like_receipt_text("कुल ₹ 340")
+    assert not looks_like_receipt_text("")
+    assert not looks_like_receipt_text("HAPPY BIRTHDAY RAVI")
+    assert not looks_like_receipt_text("Marina Beach Chennai 2024 sunset view")
+    assert has_receipt_data({"ReceiptInfo": {"total": 0, "ITEMS": [{"totalPrice": 20}]}})
+    assert not has_receipt_data({"ReceiptInfo": {"merchant": "", "total": 0, "ITEMS": []}})
+
+    headers, me = sign_in("photo-person")
+    texts = {"calls": 0}
+    original = processing.extract_google_text
+
+    def selfie_text(content):
+        texts["calls"] += 1
+        return "Goa trip with friends"
+    processing.extract_google_text = selfie_text
+    llm_before = LLM_CALLS["n"]
+    try:
+        r = upload(headers, b"selfie-bytes")
+        assert r.status_code == 422 and "doesn't look like a receipt" in r.json()["detail"]
+        assert LLM_CALLS["n"] == llm_before  # never paid for the LLM
+        r = upload(headers, b"selfie-bytes")  # same photo again: rejected from the cache
+        assert r.status_code == 422 and texts["calls"] == 1
+    finally:
+        processing.extract_google_text = original
+    assert client.get("/auth/me", headers=headers).json()["files_used"] == me["files_used"]  # not counted
+
+    # Text that passes the first check but the LLM finds no amounts in.
+    async def empty_parse(text):
+        return {"ReceiptInfo": {"merchant": "", "total": 0, "ITEMS": []}}
+    processing.extract_google_text = lambda c: "Order form: qty 25"
+    original_parse = processing.parse_with_deepseek
+    processing.parse_with_deepseek = empty_parse
+    try:
+        r = client.post("/receipts", headers=headers, files=[
+            ("files", ("form.jpg", io.BytesIO(b"form-bytes"), "image/jpeg")),
+        ])
+        assert r.status_code == 422 and "doesn't look like a receipt" in r.json()["detail"]
+    finally:
+        processing.extract_google_text = original
+        processing.parse_with_deepseek = original_parse
+
+    # A real bill alongside a photo: the bill is saved, the photo is listed as failed.
+    processing.extract_google_text = lambda c: "Goa trip" if c == b"selfie-bytes" else "RECEIPT TOTAL 450.50"
+    try:
+        r = client.post("/receipts", headers=headers, files=[
+            ("files", ("bill.jpg", io.BytesIO(b"real-bill-bytes"), "image/jpeg")),
+            ("files", ("selfie.jpg", io.BytesIO(b"selfie-bytes"), "image/jpeg")),
+        ])
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert len(body["receipts"]) == 1 and body["failed"][0]["fileName"] == "selfie.jpg"
+        assert "doesn't look like a receipt" in body["failed"][0]["error"]
+    finally:
+        processing.extract_google_text = original
+    assert client.get("/auth/me", headers=headers).json()["files_used"] == me["files_used"] + 1
