@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, user_json
 from database import CaContact, EmailLog, Feedback, Receipt, ShareLink, UsageCounter, User, get_db
-from processing import extract_receipt, summarize
+from processing import NotAReceipt, extract_receipt, summarize
 
 router = APIRouter()
 
@@ -226,6 +226,9 @@ async def upload_receipts(
 
         try:
             summary = summarize(await extract_receipt(contents, db))
+        except NotAReceipt as e:
+            failed.append({"fileName": upload.filename, "error": e.message})
+            continue
         except Exception as e:
             print(f"Error processing upload for user {user.id}: {type(e).__name__}: {str(e)[:300]}", flush=True)
             failed.append({"fileName": upload.filename, "error": "Could not read this receipt"})
