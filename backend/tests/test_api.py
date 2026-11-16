@@ -102,14 +102,24 @@ def test_upload_list_and_cache():
     assert listed["receipts"][0]["processed_data"]["items"][0]["amount"] == 50.5
 
 
-def test_free_quota_and_batch_limit():
+def test_free_quota_counts_every_file():
     headers, _ = sign_in("cat")
     assert upload(headers, b"c1").status_code == 200
+    # One free file left: two at once is refused, with how many are left.
+    two = [("files", ("a.jpg", io.BytesIO(b"x"), "image/jpeg")), ("files", ("b.jpg", io.BytesIO(b"y"), "image/jpeg"))]
+    r = client.post("/receipts", headers=headers, files=two)
+    assert r.status_code == 403 and "1 file left" in r.json()["detail"]
     assert upload(headers, b"c2").status_code == 200
     r = upload(headers, b"c3")
-    assert r.status_code == 403 and "free" in r.json()["detail"]
-    two = [("files", ("a.jpg", io.BytesIO(b"x"), "image/jpeg")), ("files", ("b.jpg", io.BytesIO(b"y"), "image/jpeg"))]
-    assert client.post("/receipts", headers=headers, files=two).status_code == 403
+    assert r.status_code == 403 and "used all" in r.json()["detail"]
+
+
+def test_free_user_can_upload_several_at_once():
+    headers, _ = sign_in("cyd")
+    two = [("files", ("a.jpg", io.BytesIO(b"cy-a"), "image/jpeg")), ("files", ("b.jpg", io.BytesIO(b"cy-b"), "image/jpeg"))]
+    r = client.post("/receipts", headers=headers, files=two)
+    assert r.status_code == 200 and len(r.json()["receipts"]) == 2
+    assert client.get("/auth/me", headers=headers).json()["files_used"] == 2
 
 
 def test_users_cannot_see_each_other():
