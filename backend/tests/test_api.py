@@ -332,3 +332,29 @@ def test_feedback(monkeypatch):
     db = SessionLocal()
     assert db.query(Feedback).filter(Feedback.email == "lea@example.com").count() == 0
     db.close()
+
+
+def test_admin_settings_and_users(monkeypatch):
+    headers, user = sign_in("max")
+    other, other_user = sign_in("ned")
+    assert client.get("/config").json()["premium_monthly"] == 199
+    assert client.put("/admin/config", headers=headers, json={"currency": "USD", "premium_monthly": 5, "premium_yearly": 50}).status_code == 403
+    assert client.get("/auth/me", headers=headers).json()["is_admin"] is False
+
+    monkeypatch.setenv("ADMIN_EMAILS", "someone@x.com, MAX@example.com")
+    assert client.get("/auth/me", headers=headers).json()["is_admin"] is True
+    assert client.put("/admin/config", headers=headers, json={"currency": "XYZ", "premium_monthly": 5, "premium_yearly": 50}).status_code == 422
+    saved = client.put("/admin/config", headers=headers, json={"currency": "usd", "premium_monthly": 4.99, "premium_yearly": 49}).json()
+    assert saved["currency"] == "USD" and saved["currency_symbol"] == "$"
+    pub = client.get("/config").json()
+    assert pub["premium_monthly"] == 4.99 and pub["premium_yearly"] == 49
+
+    found = client.get("/admin/users?q=ned", headers=headers).json()
+    assert [u["email"] for u in found["users"]] == ["ned@example.com"]
+    r = client.patch(f"/admin/users/{other_user['id']}", headers=headers, json={"tier": "premium"})
+    assert r.status_code == 200 and r.json()["tier"] == "premium"
+    assert client.get("/auth/me", headers=other).json()["tier"] == "premium"
+    assert client.patch(f"/admin/users/{user['id']}", headers=other, json={"tier": "premium"}).status_code == 403
+    assert client.get("/admin/users", headers=other).status_code == 403
+    # put the defaults back for other tests
+    client.put("/admin/config", headers=headers, json={"currency": "INR", "premium_monthly": 199, "premium_yearly": 1999})

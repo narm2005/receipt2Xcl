@@ -92,7 +92,8 @@ def _add_usage(db: Session, user_id: str) -> None:
 
 @router.get("/auth/me")
 def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return {**user_json(user), "usage": usage_json(db, user)}
+    from settings import is_admin
+    return {**user_json(user), "usage": usage_json(db, user), "is_admin": is_admin(user)}
 
 
 @router.delete("/auth/me")
