@@ -131,6 +131,21 @@ class EmailLog(Base):
     sent_at = Column(DateTime(timezone=True), index=True, nullable=False, default=_now)
 
 
+class Feedback(Base):
+    """Messages from the Feedback page. Read them in Supabase: select * from app.feedback order by created_at desc;"""
+    __tablename__ = "feedback"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True)
+    email = Column(String(320), nullable=True)
+    category = Column(String(20), nullable=False, default="other")
+    rating = Column(Integer, nullable=True)
+    message = Column(Text, nullable=False)
+    page = Column(String(200), nullable=True)
+    ip = Column(String(45), nullable=True)
+    created_at = Column(DateTime(timezone=True), index=True, nullable=False, default=_now)
+
+
 class CachedResult(Base):
     __tablename__ = "cached_results"
 

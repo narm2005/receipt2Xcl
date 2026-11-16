@@ -304,3 +304,31 @@ def test_ca_contact_link_and_email(monkeypatch):
     assert p["to"][0]["email"] == "ravi@ca.example" and p["cc"][0]["email"] == "kim@example.com"
     assert p["attachment"][0]["name"] == "receipts-feb-2026.xlsx" and "Feb 2026" in p["subject"]
     assert client.post("/ca/email", headers=headers, json={"ids": [rid]}).status_code == 429
+
+
+def test_feedback(monkeypatch):
+    import ca
+    import feedback as fbmod
+    r = client.post("/feedback", json={"category": "idea", "rating": 5, "message": "Please add Tally export", "email": "visitor@example.com"})
+    assert r.status_code == 200
+    assert client.post("/feedback", json={"message": "hi there", "email": "bad"}).status_code == 422
+    assert client.post("/feedback", json={"message": "x"}).status_code == 400  # too short
+    headers, user = sign_in("lea")
+    monkeypatch.setenv("BREVO_API_KEY", "k")
+    monkeypatch.setenv("MAIL_FROM_EMAIL", "bills@slickreceipts.example")
+    monkeypatch.setenv("FEEDBACK_TO_EMAIL", "support@slickreceipts.example")
+    sent = []
+    monkeypatch.setattr(ca, "send_email", lambda p: sent.append(p))
+    assert client.post("/feedback", headers=headers, json={"category": "bug", "message": "Export button is slow"}).status_code == 200
+    assert sent[0]["to"][0]["email"] == "support@slickreceipts.example" and sent[0]["replyTo"]["email"] == "lea@example.com"
+    from database import Feedback, SessionLocal
+    db = SessionLocal()
+    row = db.query(Feedback).filter(Feedback.user_id == user["id"]).one()
+    assert row.category == "bug" and row.email == "lea@example.com"
+    db.close()
+    monkeypatch.setattr(fbmod, "PER_IP_PER_HOUR", 1)
+    assert client.post("/feedback", headers=headers, json={"message": "one more thing"}).status_code == 429
+    client.delete("/auth/me", headers=headers)
+    db = SessionLocal()
+    assert db.query(Feedback).filter(Feedback.email == "lea@example.com").count() == 0
+    db.close()

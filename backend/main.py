@@ -19,6 +19,7 @@ from database import get_db  # noqa: E402
 from processing import extract_receipt, summarize  # noqa: E402
 from routes import router  # noqa: E402
 from ca import router as ca_router  # noqa: E402
+from feedback import router as feedback_router  # noqa: E402
 
 # Shared secret for the old Supabase edge function (legacy /process and /upload).
 # Leave unset once the app no longer uses Supabase: those endpoints are then switched off.
@@ -47,6 +48,7 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(ca_router)
+app.include_router(feedback_router)
 
 
 @app.exception_handler(RequestValidationError)
