@@ -112,14 +112,14 @@ async def upload_receipts(
         raise HTTPException(status_code=400, detail="No files provided.")
     if len(files) > MAX_FILES_PER_REQUEST:
         raise HTTPException(status_code=413, detail=f"At most {MAX_FILES_PER_REQUEST} files at a time.")
-    if user.tier != "premium":
-        if len(files) > 1:
-            raise HTTPException(status_code=403, detail="Free plan processes one file at a time. Upgrade for batch uploads.")
-        if user.files_used + len(files) > FREE_FILE_LIMIT:
-            raise HTTPException(
-                status_code=403,
-                detail=f"You have used all {FREE_FILE_LIMIT} free files. Please upgrade to Premium for unlimited uploads.",
-            )
+    if user.tier != "premium" and user.files_used + len(files) > FREE_FILE_LIMIT:
+        left = max(0, FREE_FILE_LIMIT - user.files_used)
+        detail = (
+            f"You have used all {FREE_FILE_LIMIT} free files. Please upgrade to Premium for unlimited uploads."
+            if left == 0
+            else f"Your free plan has {left} file{'s' if left != 1 else ''} left. Remove some files or upgrade to Premium."
+        )
+        raise HTTPException(status_code=403, detail=detail)
     _check_hourly_limit(user.id, len(files))
 
     results, failed = [], []
