@@ -15,7 +15,7 @@ import requests
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, user_json
-from database import CaContact, EmailLog, Receipt, ShareLink, UsageCounter, User, get_db
+from database import CaContact, EmailLog, Feedback, Receipt, ShareLink, UsageCounter, User, get_db
 from processing import extract_receipt, summarize
 
 router = APIRouter()
@@ -104,6 +104,8 @@ def delete_account(user: User = Depends(get_current_user), db: Session = Depends
     db.query(UsageCounter).filter(UsageCounter.user_id == uid).delete(synchronize_session=False)
     for model in (CaContact, ShareLink, EmailLog):
         db.query(model).filter(model.user_id == uid).delete(synchronize_session=False)
+    # Keep feedback text but remove who sent it.
+    db.query(Feedback).filter(Feedback.user_id == uid).update({"user_id": None, "email": None}, synchronize_session=False)
     db.delete(user)
     db.commit()
 
