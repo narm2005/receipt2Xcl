@@ -1,12 +1,12 @@
-"""One-time copy of users and processed receipts from the old Supabase database into the new one.
+"""One-time copy of users and processed receipts from the old Supabase tables (public.profiles,
+public.processed_files, public.upload_logs) into the backend's own tables.
 
-Usage (from the backend folder):
-    SUPABASE_DB_URL='postgresql://postgres:<password>@db.<project>.supabase.co:5432/postgres' \
-    DATABASE_URL='<new Neon connection string>' \
-    JWT_SECRET=unused python scripts/import_from_supabase.py
+Usage (from the backend folder). While the app stays on Supabase, both URLs are the same Supabase database:
+    SUPABASE_DB_URL='<Supabase connection string>' DATABASE_URL='<same string>' \
+    SUPABASE_URL=unused python scripts/import_from_supabase.py
 
 Safe to run more than once: rows already imported are skipped.
-Imported users are linked to their Google account the first time they sign in (matched by email).
+Users keep their Supabase user id, so their tier, usage and history are theirs the next time they sign in.
 """
 import json
 import os
@@ -32,7 +32,7 @@ with psycopg.connect(src_url) as src:
     for pid, email, name, picture, tier in profiles:
         if db.get(User, pid):
             continue
-        db.add(User(id=pid, google_sub=f"import:{pid}", email=email, name=name, picture=picture,
+        db.add(User(id=pid, google_sub=f"supabase:{pid}", email=email, name=name, picture=picture,
                     tier=tier if tier in ("freemium", "premium") else "freemium",
                     files_used=usage.get(pid, 0)))
         users_added += 1

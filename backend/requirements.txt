@@ -8,6 +8,6 @@ requests
 langchain-core
 google-cloud-vision
 google-auth
-PyJWT
+PyJWT[crypto]
 openpyxl
 psycopg[binary]

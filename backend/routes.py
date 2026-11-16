@@ -1,4 +1,4 @@
-"""The app's own API: sign-in, receipts, exports and analytics. Replaces Supabase tables, RPCs and edge functions."""
+"""The app's own API: receipts, exports and analytics. Replaces the Supabase edge functions, RPCs and direct table reads."""
 import csv
 import io
 import json
@@ -10,18 +10,14 @@ from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
-from google.auth.transport import requests as google_requests
-from google.oauth2 import id_token
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from auth import create_session_token, get_current_user, user_json
+from auth import get_current_user, user_json
 from database import Receipt, User, get_db
 from processing import extract_receipt, summarize
 
 router = APIRouter()
 
-GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 FREE_FILE_LIMIT = int(os.getenv("FREE_FILE_LIMIT", "10"))
 MAX_FILES_PER_REQUEST = int(os.getenv("MAX_FILES_PER_REQUEST", "10"))
 MAX_FILE_BYTES = int(os.getenv("MAX_FILE_MB", "10")) * 1024 * 1024
@@ -44,38 +40,6 @@ def _check_hourly_limit(user_id: str, count: int) -> None:
 
 
 # ---------- Auth ----------
-
-
-class GoogleCredential(BaseModel):
-    credential: str
-
-
-@router.post("/auth/google")
-def sign_in_with_google(body: GoogleCredential, db: Session = Depends(get_db)):
-    if not GOOGLE_CLIENT_ID:
-        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
-    try:
-        info = id_token.verify_oauth2_token(body.credential, google_requests.Request(), GOOGLE_CLIENT_ID)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid Google credential")
-    if not info.get("email_verified", False):
-        raise HTTPException(status_code=401, detail="Google email is not verified")
-
-    user = db.query(User).filter(User.google_sub == info["sub"]).first()
-    if not user and info.get("email"):
-        # An account imported from Supabase has the email but no Google id yet: link it.
-        user = db.query(User).filter(User.email == info["email"], User.google_sub.like("import:%")).first()
-        if user:
-            user.google_sub = info["sub"]
-    if not user:
-        user = User(google_sub=info["sub"])
-        db.add(user)
-    user.email = info.get("email")
-    user.name = info.get("name")
-    user.picture = info.get("picture")
-    db.commit()
-    db.refresh(user)
-    return {"token": create_session_token(user), "user": user_json(user)}
 
 
 @router.get("/auth/me")

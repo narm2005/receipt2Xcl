@@ -1,5 +1,6 @@
-"""API tests with Google Vision, DeepSeek and Google sign-in stubbed. Run: cd backend && pytest -q"""
+"""API tests with Google Vision and DeepSeek stubbed; Supabase tokens are signed locally. Run: cd backend && pytest -q"""
 import io
+import time
 import json
 import os
 import sys
@@ -10,15 +11,17 @@ import pytest
 _db = tempfile.NamedTemporaryFile(suffix=".db", delete=False).name
 os.environ.update(
     BACKEND_API_KEY="test-key",
-    JWT_SECRET="test-secret",
+    SUPABASE_URL="https://proj.supabase.co",
+    SUPABASE_JWT_SECRET="test-secret-test-secret-test-secret",
     DEEPSEEK_API_KEY="x",
-    GOOGLE_CLIENT_ID="client-id",
     GOOGLE_APPLICATION_CREDENTIALS_JSON=json.dumps({"type": "service_account"}),
-    DATABASE_URL=f"sqlite:///{_db}",
+    DATABASE_URL=os.environ.get("TEST_DATABASE_URL") or f"sqlite:///{_db}",
     FREE_FILE_LIMIT="2",
 )
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import jwt  # noqa: E402
+import auth  # noqa: E402
 import main  # noqa: E402
 import processing  # noqa: E402
 import routes  # noqa: E402
@@ -39,21 +42,28 @@ processing.extract_google_text = lambda content: "RECEIPT TEXT"
 processing.parse_with_deepseek = fake_parse
 
 
-def fake_verify(credential, request, client_id):
-    if not credential.startswith("good-"):
-        raise ValueError("bad token")
-    who = credential[len("good-"):]
-    return {"sub": f"sub-{who}", "email": f"{who}@example.com", "email_verified": True, "name": who.title(), "picture": None}
-
-
-routes.id_token.verify_oauth2_token = fake_verify
+ISSUER = "https://proj.supabase.co/auth/v1"
 client = TestClient(main.app)
 
 
+def supabase_token(who, key="test-secret-test-secret-test-secret", alg="HS256", **overrides):
+    claims = {
+        "sub": f"00000000-0000-0000-0000-{who.encode().hex()[:12].ljust(12, '0')}",
+        "email": f"{who}@example.com",
+        "aud": "authenticated",
+        "iss": ISSUER,
+        "exp": int(time.time()) + 3600,
+        "user_metadata": {"full_name": who.title(), "avatar_url": None},
+        **overrides,
+    }
+    return jwt.encode(claims, key, algorithm=alg)
+
+
 def sign_in(who="ann"):
-    r = client.post("/auth/google", json={"credential": f"good-{who}"})
+    headers = {"Authorization": f"Bearer {supabase_token(who)}"}
+    r = client.get("/auth/me", headers=headers)
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}"}, r.json()["user"]
+    return headers, r.json()
 
 
 def upload(headers, content=b"image-bytes", name="r.jpg"):
@@ -64,7 +74,14 @@ def test_sign_in_and_me():
     headers, user = sign_in("ann")
     assert user["email"] == "ann@example.com" and user["tier"] == "freemium"
     assert client.get("/auth/me", headers=headers).json()["user_metadata"]["name"] == "Ann"
-    assert client.post("/auth/google", json={"credential": "forged"}).status_code == 401
+    assert client.get("/auth/me", headers=headers).json()["id"] == user["id"]  # same user on every request
+    for bad in (
+        supabase_token("ann", key="wrong-secret-wrong-secret-wrong-sec"),
+        supabase_token("ann", aud="anon"),
+        supabase_token("ann", iss="https://other.supabase.co/auth/v1"),
+        supabase_token("ann", exp=int(time.time()) - 10),
+    ):
+        assert client.get("/auth/me", headers={"Authorization": f"Bearer {bad}"}).status_code == 401
     assert client.get("/auth/me").status_code == 401
     assert client.get("/auth/me", headers={"Authorization": "Bearer nonsense"}).status_code == 401
 
@@ -151,3 +168,19 @@ def test_legacy_process_endpoint_still_guarded():
     assert client.post("/process", json=body).status_code == 401
     r = client.post("/process", json=body, headers={"X-API-Key": "test-key"})
     assert r.status_code == 200 and r.json()["files"][0]["merchant"] == "Big Bazaar"
+
+
+def test_asymmetric_supabase_keys(monkeypatch):
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    private = ec.generate_private_key(ec.SECP256R1())
+
+    class FakeJwks:
+        def get_signing_key_from_jwt(self, token):
+            return type("K", (), {"key": private.public_key()})()
+
+    monkeypatch.setattr(auth, "_jwks", FakeJwks())
+    good = supabase_token("gil", key=private, alg="ES256")
+    assert client.get("/auth/me", headers={"Authorization": f"Bearer {good}"}).json()["email"] == "gil@example.com"
+    forged = supabase_token("gil", key=ec.generate_private_key(ec.SECP256R1()), alg="ES256")
+    assert client.get("/auth/me", headers={"Authorization": f"Bearer {forged}"}).status_code == 401

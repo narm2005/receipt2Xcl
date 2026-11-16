@@ -2,7 +2,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from sqlalchemy import Column, Date, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 
@@ -18,11 +18,20 @@ def _database_url() -> str:
 
 DATABASE_URL = _database_url()
 
+IS_SQLITE = DATABASE_URL.startswith("sqlite")
+
+# On Postgres the app's tables live in their own schema ("app" by default), not "public".
+# In Supabase that matters: everything in "public" is reachable through Supabase's REST API with the
+# public anon key, while other schemas are not exposed. It also keeps clear of the old Supabase tables.
+DB_SCHEMA = None if IS_SQLITE else (os.getenv("DB_SCHEMA") or "app")
+
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-    pool_pre_ping=True,  # Neon closes idle connections; reconnect transparently
+    connect_args={"check_same_thread": False} if IS_SQLITE else {"prepare_threshold": None},
+    pool_pre_ping=True,  # hosted Postgres closes idle connections; reconnect transparently
 )
+if DB_SCHEMA:
+    engine = engine.execution_options(schema_translate_map={None: DB_SCHEMA})
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -95,4 +104,7 @@ class UploadLog(Base):
 
 
 # Create tables if they do not exist yet (safe to run on every start).
+if DB_SCHEMA:
+    with engine.begin() as conn:
+        conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{DB_SCHEMA}"'))
 Base.metadata.create_all(bind=engine)
